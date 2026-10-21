@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,640 +16,294 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
-import datetime
-import functools
-import inspect
-
 import os
-import re
-from collections import defaultdict
-from queue import Queue
-from threading import Thread, Event
-from time import sleep
-from typing import Callable, List, Iterable, Any
+import zoneinfo
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
-import pytz
 
 from telegram import (
-    Message,
-    User,
-    Chat,
-    MessageEntity,
-    Update,
-    InlineQuery,
     CallbackQuery,
-    ShippingQuery,
-    PreCheckoutQuery,
+    Chat,
     ChosenInlineResult,
-    File,
-    ChatPermissions,
+    InlineQuery,
+    Message,
+    PreCheckoutQuery,
+    ShippingQuery,
+    Update,
+    User,
 )
-from telegram.ext import (
-    Dispatcher,
-    JobQueue,
-    Updater,
-    MessageFilter,
-    Defaults,
-    UpdateFilter,
-    ExtBot,
-)
-from telegram.error import BadRequest
-from telegram.utils.helpers import DefaultValue, DEFAULT_NONE
-from tests.bots import get_bot
+from telegram.ext import Defaults
+from tests.auxil.build_messages import DATE, make_message
+from tests.auxil.ci_bots import BOT_INFO_PROVIDER
+from tests.auxil.constants import PRIVATE_KEY, TEST_TOPIC_ICON_COLOR, TEST_TOPIC_NAME
+from tests.auxil.envvars import TEST_WITH_OPT_DEPS, env_var_2_bool
+from tests.auxil.files import data_file
+from tests.auxil.networking import NonchalantHttpxRequest
+from tests.auxil.pytest_classes import PytestBot, make_bot
+
+if TEST_WITH_OPT_DEPS:
+    import pytz
 
 
 # This is here instead of in setup.cfg due to https://github.com/pytest-dev/pytest/issues/8343
-def pytest_runtestloop(session):
+def pytest_runtestloop(session: pytest.Session):
     session.add_marker(
-        pytest.mark.filterwarnings('ignore::telegram.utils.deprecate.TelegramDeprecationWarning')
+        pytest.mark.filterwarnings("ignore::telegram.warnings.PTBDeprecationWarning")
     )
 
 
-GITHUB_ACTION = os.getenv('GITHUB_ACTION', False)
-
-if GITHUB_ACTION:
-    pytest_plugins = ['tests.plugin_github_group']
-
-# THIS KEY IS OBVIOUSLY COMPROMISED
-# DO NOT USE IN PRODUCTION!
-PRIVATE_KEY = b"-----BEGIN RSA PRIVATE KEY-----\r\nMIIEowIBAAKCAQEA0AvEbNaOnfIL3GjB8VI4M5IaWe+GcK8eSPHkLkXREIsaddum\r\nwPBm/+w8lFYdnY+O06OEJrsaDtwGdU//8cbGJ/H/9cJH3dh0tNbfszP7nTrQD+88\r\nydlcYHzClaG8G+oTe9uEZSVdDXj5IUqR0y6rDXXb9tC9l+oSz+ShYg6+C4grAb3E\r\nSTv5khZ9Zsi/JEPWStqNdpoNuRh7qEYc3t4B/a5BH7bsQENyJSc8AWrfv+drPAEe\r\njQ8xm1ygzWvJp8yZPwOIYuL+obtANcoVT2G2150Wy6qLC0bD88Bm40GqLbSazueC\r\nRHZRug0B9rMUKvKc4FhG4AlNzBCaKgIcCWEqKwIDAQABAoIBACcIjin9d3Sa3S7V\r\nWM32JyVF3DvTfN3XfU8iUzV7U+ZOswA53eeFM04A/Ly4C4ZsUNfUbg72O8Vd8rg/\r\n8j1ilfsYpHVvphwxaHQlfIMa1bKCPlc/A6C7b2GLBtccKTbzjARJA2YWxIaqk9Nz\r\nMjj1IJK98i80qt29xRnMQ5sqOO3gn2SxTErvNchtBiwOH8NirqERXig8VCY6fr3n\r\nz7ZImPU3G/4qpD0+9ULrt9x/VkjqVvNdK1l7CyAuve3D7ha3jPMfVHFtVH5gqbyp\r\nKotyIHAyD+Ex3FQ1JV+H7DkP0cPctQiss7OiO9Zd9C1G2OrfQz9el7ewAPqOmZtC\r\nKjB3hUECgYEA/4MfKa1cvaCqzd3yUprp1JhvssVkhM1HyucIxB5xmBcVLX2/Kdhn\r\nhiDApZXARK0O9IRpFF6QVeMEX7TzFwB6dfkyIePsGxputA5SPbtBlHOvjZa8omMl\r\nEYfNa8x/mJkvSEpzvkWPascuHJWv1cEypqphu/70DxubWB5UKo/8o6cCgYEA0HFy\r\ncgwPMB//nltHGrmaQZPFT7/Qgl9ErZT3G9S8teWY4o4CXnkdU75tBoKAaJnpSfX3\r\nq8VuRerF45AFhqCKhlG4l51oW7TUH50qE3GM+4ivaH5YZB3biwQ9Wqw+QyNLAh/Q\r\nnS4/Wwb8qC9QuyEgcCju5lsCaPEXZiZqtPVxZd0CgYEAshBG31yZjO0zG1TZUwfy\r\nfN3euc8mRgZpSdXIHiS5NSyg7Zr8ZcUSID8jAkJiQ3n3OiAsuq1MGQ6kNa582kLT\r\nFPQdI9Ea8ahyDbkNR0gAY9xbM2kg/Gnro1PorH9PTKE0ekSodKk1UUyNrg4DBAwn\r\nqE6E3ebHXt/2WmqIbUD653ECgYBQCC8EAQNX3AFegPd1GGxU33Lz4tchJ4kMCNU0\r\nN2NZh9VCr3nTYjdTbxsXU8YP44CCKFG2/zAO4kymyiaFAWEOn5P7irGF/JExrjt4\r\nibGy5lFLEq/HiPtBjhgsl1O0nXlwUFzd7OLghXc+8CPUJaz5w42unqT3PBJa40c3\r\nQcIPdQKBgBnSb7BcDAAQ/Qx9juo/RKpvhyeqlnp0GzPSQjvtWi9dQRIu9Pe7luHc\r\nm1Img1EO1OyE3dis/rLaDsAa2AKu1Yx6h85EmNjavBqP9wqmFa0NIQQH8fvzKY3/\r\nP8IHY6009aoamLqYaexvrkHVq7fFKiI6k8myMJ6qblVNFv14+KXU\r\n-----END RSA PRIVATE KEY-----"  # noqa: E501
-
-
-def env_var_2_bool(env_var: object) -> bool:
-    if isinstance(env_var, bool):
-        return env_var
-    if not isinstance(env_var, str):
-        return False
-    return env_var.lower().strip() == 'true'
+def no_rerun_after_xfail_or_flood(error, name, test: pytest.Function, plugin):
+    """Don't rerun tests that have xfailed when marked with xfail, or when we hit a flood limit."""
+    xfail_present = test.get_closest_marker(name="xfail")
+    if getattr(error[1], "msg", "") is None:
+        raise error[1]
+    did_we_flood = "flood" in getattr(error[1], "msg", "")  # _pytest.outcomes.XFailed has 'msg'
+    return not (xfail_present or did_we_flood)
 
 
-@pytest.fixture(scope='session')
-def bot_info():
-    return get_bot()
+def pytest_collection_modifyitems(items: list[pytest.Item]):
+    """Here we add a flaky marker to all request making tests and a (no_)req marker to the rest."""
+    for item in items:  # items are the test methods
+        parent = item.parent  # Get the parent of the item (class, or module if defined outside)
+        if parent is None:  # should never happen, but just in case
+            return
+        if (  # Check if the class name ends with 'WithRequest' and if it has no flaky marker
+            parent.name.endswith("WithRequest")
+            and not parent.get_closest_marker(  # get_closest_marker gets pytest.marks with `name`
+                name="flaky"
+            )  # don't add/override any previously set markers
+            and not parent.get_closest_marker(name="req")
+        ):  # Add the flaky marker with a rerun filter to the class
+            parent.add_marker(pytest.mark.flaky(3, 1, rerun_filter=no_rerun_after_xfail_or_flood))
+            parent.add_marker(pytest.mark.req)
+        # Add the no_req marker to all classes that end with 'WithoutRequest' and don't have it
+        elif parent.name.endswith("WithoutRequest") and not parent.get_closest_marker(
+            name="no_req"
+        ):
+            parent.add_marker(pytest.mark.no_req)
+
+        if item.get_closest_marker(name="no_req"):
+            # Applying this marker here instead of through a function-scoped fixture ensures that
+            # external network access is already blocked while higher-scoped fixtures are being
+            # set up. Loopback must remain available because some tests use it
+            item.add_marker(pytest.mark.allow_hosts(["localhost", "127.0.0.1", "::1"]))
 
 
-@pytest.fixture(scope='session')
-def bot(bot_info):
-    class DictExtBot(
-        ExtBot
-    ):  # Subclass Bot to allow monkey patching of attributes and functions, would
-        pass  # come into effect when we __dict__ is dropped from slots
+@pytest.fixture(scope="module", params=["true", "1", "false", "gibberish", None])
+def PTB_TIMEDELTA(request):
+    # Here we manually use monkeypatch to give this fixture module scope
+    monkeypatch = pytest.MonkeyPatch()
+    if request.param is not None:
+        monkeypatch.setenv("PTB_TIMEDELTA", request.param)
+    else:
+        monkeypatch.delenv("PTB_TIMEDELTA", raising=False)
+    yield env_var_2_bool(os.getenv("PTB_TIMEDELTA"))
+    monkeypatch.undo()
 
-    return DictExtBot(bot_info['token'], private_key=PRIVATE_KEY)
+
+@pytest.fixture(scope="session")
+def bot_info() -> dict[str, str]:
+    return BOT_INFO_PROVIDER.get_info()
 
 
-DEFAULT_BOTS = {}
+@pytest.fixture(scope="session")
+async def bot(bot_info):
+    """Makes an ExtBot instance with the given bot_info"""
+    async with make_bot(bot_info, offline=False) as _bot:
+        yield _bot
 
 
-@pytest.fixture(scope='function')
-def default_bot(request, bot_info):
-    param = request.param if hasattr(request, 'param') else {}
+@pytest.fixture(scope="session")
+async def offline_bot(bot_info):
+    """Makes an offline Bot instance with the given bot_info
+    Note that in tests/ext we also override the `bot` fixture to return the offline bot instead.
+    """
+    async with make_bot(bot_info, offline=True) as _bot:
+        yield _bot
 
+
+@pytest.fixture
+def one_time_bot(bot_info):
+    """A function scoped bot since the session bot would shutdown when `async with app` finishes"""
+    return make_bot(bot_info, offline=False)
+
+
+@pytest.fixture(scope="session")
+async def cdc_bot(bot_info):
+    """Makes an ExtBot instance with the given bot_info that uses arbitrary callback_data"""
+    async with make_bot(bot_info, arbitrary_callback_data=True, offline=False) as _bot:
+        yield _bot
+
+
+@pytest.fixture(scope="session")
+async def raw_bot(bot_info):
+    """Makes an regular Bot instance with the given bot_info"""
+    async with PytestBot(
+        bot_info["token"],
+        private_key=PRIVATE_KEY if TEST_WITH_OPT_DEPS else None,
+        request=NonchalantHttpxRequest(8),
+        get_updates_request=NonchalantHttpxRequest(1),
+    ) as _bot:
+        yield _bot
+
+
+# Here we store the default bots so that we don't have to create them again and again.
+# They are initialized but not shutdown on pytest_sessionfinish because it is causing
+# problems with the event loop (Event loop is closed).
+_default_bots = {}
+
+
+@pytest.fixture(scope="session")
+async def default_bot(request, bot_info):
+    param = request.param if hasattr(request, "param") else {}
     defaults = Defaults(**param)
-    default_bot = DEFAULT_BOTS.get(defaults)
-    if default_bot:
-        return default_bot
-    default_bot = make_bot(bot_info, **{'defaults': defaults})
-    DEFAULT_BOTS[defaults] = default_bot
+
+    # If the bot is already created, return it. Else make a new one.
+    default_bot = _default_bots.get(defaults)
+    if default_bot is None:
+        default_bot = make_bot(bot_info, defaults=defaults, offline=False)
+        await default_bot.initialize()
+        _default_bots[defaults] = default_bot  # Defaults object is hashable
     return default_bot
 
 
-@pytest.fixture(scope='function')
-def tz_bot(timezone, bot_info):
+@pytest.fixture(scope="session")
+async def tz_bot(timezone, bot_info):
     defaults = Defaults(tzinfo=timezone)
-    default_bot = DEFAULT_BOTS.get(defaults)
-    if default_bot:
+    try:  # If the bot is already created, return it. Saves time since get_me is not called again.
+        return _default_bots[defaults]
+    except KeyError:
+        default_bot = make_bot(bot_info, defaults=defaults, offline=False)
+        await default_bot.initialize()
+        _default_bots[defaults] = default_bot
         return default_bot
-    default_bot = make_bot(bot_info, **{'defaults': defaults})
-    DEFAULT_BOTS[defaults] = default_bot
-    return default_bot
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def chat_id(bot_info):
-    return bot_info['chat_id']
+    return bot_info["chat_id"]
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def super_group_id(bot_info):
-    return bot_info['super_group_id']
+    return bot_info["super_group_id"]
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
+def forum_group_id(bot_info):
+    return int(bot_info["forum_group_id"])
+
+
+@pytest.fixture(scope="session")
 def channel_id(bot_info):
-    return bot_info['channel_id']
+    return bot_info["channel_id"]
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope="session")
 def provider_token(bot_info):
-    return bot_info['payment_provider_token']
+    return bot_info["payment_provider_token"]
 
 
-def create_dp(bot):
-    # Dispatcher is heavy to init (due to many threads and such) so we have a single session
-    # scoped one here, but before each test, reset it (dp fixture below)
-    dispatcher = Dispatcher(bot, Queue(), job_queue=JobQueue(), workers=2, use_context=False)
-    dispatcher.job_queue.set_dispatcher(dispatcher)
-    thr = Thread(target=dispatcher.start)
-    thr.start()
-    sleep(2)
-    yield dispatcher
-    sleep(1)
-    if dispatcher.running:
-        dispatcher.stop()
-    thr.join()
+@pytest.fixture(scope="session")
+def subscription_channel_id(bot_info):
+    return bot_info["subscription_channel_id"]
 
 
-@pytest.fixture(scope='session')
-def _dp(bot):
-    yield from create_dp(bot)
-
-
-@pytest.fixture(scope='function')
-def dp(_dp):
-    # Reset the dispatcher first
-    while not _dp.update_queue.empty():
-        _dp.update_queue.get(False)
-    _dp.chat_data = defaultdict(dict)
-    _dp.user_data = defaultdict(dict)
-    _dp.bot_data = {}
-    _dp.persistence = None
-    _dp.handlers = {}
-    _dp.groups = []
-    _dp.error_handlers = {}
-    # For some reason if we setattr with the name mangled, then some tests(like async) run forever,
-    # due to threads not acquiring, (blocking). This adds these attributes to the __dict__.
-    object.__setattr__(_dp, '__stop_event', Event())
-    object.__setattr__(_dp, '__exception_event', Event())
-    object.__setattr__(_dp, '__async_queue', Queue())
-    object.__setattr__(_dp, '__async_threads', set())
-    _dp.persistence = None
-    _dp.use_context = False
-    if _dp._Dispatcher__singleton_semaphore.acquire(blocking=0):
-        Dispatcher._set_singleton(_dp)
-    yield _dp
-    Dispatcher._Dispatcher__singleton_semaphore.release()
-
-
-@pytest.fixture(scope='function')
-def cdp(dp):
-    dp.use_context = True
-    yield dp
-    dp.use_context = False
-
-
-@pytest.fixture(scope='function')
-def updater(bot):
-    up = Updater(bot=bot, workers=2, use_context=False)
-    yield up
-    if up.running:
-        up.stop()
-
-
-@pytest.fixture(scope='function')
+@pytest.fixture
 def thumb_file():
-    f = open('tests/data/thumb.jpg', 'rb')
-    yield f
-    f.close()
+    with data_file("thumb.jpg").open("rb") as f:
+        yield f
 
 
-@pytest.fixture(scope='class')
+@pytest.fixture(scope="module")
 def class_thumb_file():
-    f = open('tests/data/thumb.jpg', 'rb')
-    yield f
-    f.close()
+    with data_file("thumb.jpg").open("rb") as f:
+        yield f
 
 
-def pytest_configure(config):
-    config.addinivalue_line('filterwarnings', 'ignore::ResourceWarning')
-    # TODO: Write so good code that we don't need to ignore ResourceWarnings anymore
+@pytest.fixture(scope="session")
+def offline_emoji_id():
+    return "5368324170671202286"
 
 
-def make_bot(bot_info, **kwargs):
-    """
-    Tests are executed on tg.ext.ExtBot, as that class only extends the functionality of tg.bot
-    """
-    return ExtBot(bot_info['token'], private_key=PRIVATE_KEY, **kwargs)
+@pytest.fixture(scope="session")
+async def emoji_id(bot):
+    emoji_sticker_list = await bot.get_forum_topic_icon_stickers()
+    first_sticker = emoji_sticker_list[0]
+    return first_sticker.custom_emoji_id
 
 
-CMD_PATTERN = re.compile(r'/[\da-z_]{1,32}(?:@\w{1,32})?')
-DATE = datetime.datetime.now()
-
-
-def make_message(text, **kwargs):
-    """
-    Testing utility factory to create a fake ``telegram.Message`` with
-    reasonable defaults for mimicking a real message.
-    :param text: (str) message text
-    :return: a (fake) ``telegram.Message``
-    """
-    return Message(
-        message_id=1,
-        from_user=kwargs.pop('user', User(id=1, first_name='', is_bot=False)),
-        date=kwargs.pop('date', DATE),
-        chat=kwargs.pop('chat', Chat(id=1, type='')),
-        text=text,
-        bot=kwargs.pop('bot', make_bot(get_bot())),
-        **kwargs,
+@pytest.fixture
+async def real_topic(bot, emoji_id, forum_group_id):
+    result = await bot.create_forum_topic(
+        chat_id=forum_group_id,
+        name=TEST_TOPIC_NAME,
+        icon_color=TEST_TOPIC_ICON_COLOR,
+        icon_custom_emoji_id=emoji_id,
     )
 
+    yield result
 
-def make_command_message(text, **kwargs):
-    """
-    Testing utility factory to create a message containing a single telegram
-    command.
-    Mimics the Telegram API in that it identifies commands within the message
-    and tags the returned ``Message`` object with the appropriate ``MessageEntity``
-    tag (but it does this only for commands).
-
-    :param text: (str) message text containing (or not) the command
-    :return: a (fake) ``telegram.Message`` containing only the command
-    """
-
-    match = re.search(CMD_PATTERN, text)
-    entities = (
-        [
-            MessageEntity(
-                type=MessageEntity.BOT_COMMAND, offset=match.start(0), length=len(match.group(0))
-            )
-        ]
-        if match
-        else []
+    result = await bot.delete_forum_topic(
+        chat_id=forum_group_id, message_thread_id=result.message_thread_id
     )
-
-    return make_message(text, entities=entities, **kwargs)
-
-
-def make_message_update(message, message_factory=make_message, edited=False, **kwargs):
-    """
-    Testing utility factory to create an update from a message, as either a
-    ``telegram.Message`` or a string. In the latter case ``message_factory``
-    is used to convert ``message`` to a ``telegram.Message``.
-    :param message: either a ``telegram.Message`` or a string with the message text
-    :param message_factory: function to convert the message text into a ``telegram.Message``
-    :param edited: whether the message should be stored as ``edited_message`` (vs. ``message``)
-    :return: ``telegram.Update`` with the given message
-    """
-    if not isinstance(message, Message):
-        message = message_factory(message, **kwargs)
-    update_kwargs = {'message' if not edited else 'edited_message': message}
-    return Update(0, **update_kwargs)
+    assert result is True, "Topic was not deleted"
 
 
-def make_command_update(message, edited=False, **kwargs):
-    """
-    Testing utility factory to create an update from a message that potentially
-    contains a command. See ``make_command_message`` for more details.
-    :param message: message potentially containing a command
-    :param edited: whether the message should be stored as ``edited_message`` (vs. ``message``)
-    :return: ``telegram.Update`` with the given message
-    """
-    return make_message_update(message, make_command_message, edited, **kwargs)
-
-
-@pytest.fixture(
-    scope='class',
-    params=[{'class': MessageFilter}, {'class': UpdateFilter}],
-    ids=['MessageFilter', 'UpdateFilter'],
-)
-def mock_filter(request):
-    class MockFilter(request.param['class']):
-        def __init__(self):
-            self.tested = False
-
-        def filter(self, _):
-            self.tested = True
-
-    return MockFilter()
-
-
-def get_false_update_fixture_decorator_params():
-    message = Message(1, DATE, Chat(1, ''), from_user=User(1, '', False), text='test')
+def _get_false_update_fixture_decorator_params():
+    message = Message(1, DATE, Chat(1, ""), from_user=User(1, "", False), text="test")
     params = [
-        {'callback_query': CallbackQuery(1, User(1, '', False), 'chat', message=message)},
-        {'channel_post': message},
-        {'edited_channel_post': message},
-        {'inline_query': InlineQuery(1, User(1, '', False), '', '')},
-        {'chosen_inline_result': ChosenInlineResult('id', User(1, '', False), '')},
-        {'shipping_query': ShippingQuery('id', User(1, '', False), '', None)},
-        {'pre_checkout_query': PreCheckoutQuery('id', User(1, '', False), '', 0, '')},
-        {'callback_query': CallbackQuery(1, User(1, '', False), 'chat')},
+        {"callback_query": CallbackQuery(1, User(1, "", False), "chat", message=message)},
+        {"channel_post": message},
+        {"edited_channel_post": message},
+        {"inline_query": InlineQuery(1, User(1, "", False), "", "")},
+        {"chosen_inline_result": ChosenInlineResult("id", User(1, "", False), "")},
+        {"shipping_query": ShippingQuery("id", User(1, "", False), "", None)},
+        {"pre_checkout_query": PreCheckoutQuery("id", User(1, "", False), "", 0, "")},
+        {"callback_query": CallbackQuery(1, User(1, "", False), "chat")},
     ]
     ids = tuple(key for kwargs in params for key in kwargs)
-    return {'params': params, 'ids': ids}
+    return {"params": params, "ids": ids}
 
 
-@pytest.fixture(scope='function', **get_false_update_fixture_decorator_params())
+@pytest.fixture(**_get_false_update_fixture_decorator_params())
 def false_update(request):
     return Update(update_id=1, **request.param)
 
 
-@pytest.fixture(params=['Europe/Berlin', 'Asia/Singapore', 'UTC'])
-def tzinfo(request):
-    return pytz.timezone(request.param)
+@pytest.fixture(
+    scope="session",
+    params=[pytz.timezone, zoneinfo.ZoneInfo] if TEST_WITH_OPT_DEPS else [zoneinfo.ZoneInfo],
+)
+def _tz_implementation(request):
+    # This fixture is used to parametrize the timezone fixture
+    # This is similar to what @pyttest.mark.parametrize does but for fixtures
+    # However, this is needed only internally for the `tzinfo` fixture, so we keep it private
+    return request.param
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session", params=["Europe/Berlin", "Asia/Singapore", "UTC"])
+def tzinfo(request, _tz_implementation):
+    return _tz_implementation(request.param)
+
+
+@pytest.fixture(scope="session")
 def timezone(tzinfo):
     return tzinfo
 
 
-@pytest.fixture()
-def mro_slots():
-    def _mro_slots(_class):
-        return [
-            attr
-            for cls in _class.__class__.__mro__[:-1]
-            if hasattr(cls, '__slots__')  # ABC doesn't have slots in py 3.7 and below
-            for attr in cls.__slots__
-            if attr != '__dict__'
-        ]
-
-    return _mro_slots
+@pytest.fixture
+def tmp_file(tmp_path) -> Path:
+    return tmp_path / uuid4().hex
 
 
-def expect_bad_request(func, message, reason):
-    """
-    Wrapper for testing bot functions expected to result in an :class:`telegram.error.BadRequest`.
-    Makes it XFAIL, if the specified error message is present.
-
-    Args:
-        func: The callable to be executed.
-        message: The expected message of the bad request error. If another message is present,
-            the error will be reraised.
-        reason: Explanation for the XFAIL.
-
-    Returns:
-        On success, returns the return value of :attr:`func`
-    """
-    try:
-        return func()
-    except BadRequest as e:
-        if message in str(e):
-            pytest.xfail(f'{reason}. {e}')
-        else:
-            raise e
+@pytest.fixture(scope="session")
+def dummy_message():
+    return make_message("dummy_message")
 
 
-def check_shortcut_signature(
-    shortcut: Callable,
-    bot_method: Callable,
-    shortcut_kwargs: List[str],
-    additional_kwargs: List[str],
-) -> bool:
-    """
-    Checks that the signature of a shortcut matches the signature of the underlying bot method.
-
-    Args:
-        shortcut: The shortcut, e.g. :meth:`telegram.Message.reply_text`
-        bot_method: The bot method, e.g. :meth:`telegram.Bot.send_message`
-        shortcut_kwargs: The kwargs passed by the shortcut directly, e.g. ``chat_id``
-        additional_kwargs: Additional kwargs of the shortcut that the bot method doesn't have, e.g.
-            ``quote``.
-
-    Returns:
-        :obj:`bool`: Whether or not the signature matches.
-    """
-    shortcut_sig = inspect.signature(shortcut)
-    effective_shortcut_args = set(shortcut_sig.parameters.keys()).difference(additional_kwargs)
-    effective_shortcut_args.discard('self')
-
-    bot_sig = inspect.signature(bot_method)
-    expected_args = set(bot_sig.parameters.keys()).difference(shortcut_kwargs)
-    expected_args.discard('self')
-
-    args_check = expected_args == effective_shortcut_args
-    if not args_check:
-        raise Exception(f'Expected arguments {expected_args}, got {effective_shortcut_args}')
-
-    # TODO: Also check annotation of return type. Would currently be a hassle b/c typing doesn't
-    # resolve `ForwardRef('Type')` to `Type`. For now we rely on MyPy, which probably allows the
-    # shortcuts to return more specific types than the bot method, but it's only annotations after
-    # all
-    for kwarg in effective_shortcut_args:
-        if bot_sig.parameters[kwarg].annotation != shortcut_sig.parameters[kwarg].annotation:
-            if isinstance(bot_sig.parameters[kwarg].annotation, type):
-                if bot_sig.parameters[kwarg].annotation.__name__ != str(
-                    shortcut_sig.parameters[kwarg].annotation
-                ):
-                    raise Exception(
-                        f'For argument {kwarg} I expected {bot_sig.parameters[kwarg].annotation}, '
-                        f'but got {shortcut_sig.parameters[kwarg].annotation}'
-                    )
-            else:
-                raise Exception(
-                    f'For argument {kwarg} I expected {bot_sig.parameters[kwarg].annotation}, but '
-                    f'got {shortcut_sig.parameters[kwarg].annotation}'
-                )
-
-    bot_method_sig = inspect.signature(bot_method)
-    shortcut_sig = inspect.signature(shortcut)
-    for arg in expected_args:
-        if not shortcut_sig.parameters[arg].default == bot_method_sig.parameters[arg].default:
-            raise Exception(
-                f'Default for argument {arg} does not match the default of the Bot method.'
-            )
-
-    return True
-
-
-def check_shortcut_call(
-    shortcut_method: Callable,
-    bot: ExtBot,
-    bot_method_name: str,
-    skip_params: Iterable[str] = None,
-    shortcut_kwargs: Iterable[str] = None,
-) -> bool:
-    """
-    Checks that a shortcut passes all the existing arguments to the underlying bot method. Use as::
-
-        assert check_shortcut_call(message.reply_text, message.bot, 'send_message')
-
-    Args:
-        shortcut_method: The shortcut method, e.g. `message.reply_text`
-        bot: The bot
-        bot_method_name: The bot methods name, e.g. `'send_message'`
-        skip_params: Parameters that are allowed to be missing, e.g. `['inline_message_id']`
-        shortcut_kwargs: The kwargs passed by the shortcut directly, e.g. ``chat_id``
-
-    Returns:
-        :obj:`bool`
-    """
-    if not skip_params:
-        skip_params = set()
-    if not shortcut_kwargs:
-        shortcut_kwargs = set()
-
-    orig_bot_method = getattr(bot, bot_method_name)
-    bot_signature = inspect.signature(orig_bot_method)
-    expected_args = set(bot_signature.parameters.keys()) - {'self'} - set(skip_params)
-    positional_args = {
-        name for name, param in bot_signature.parameters.items() if param.default == param.empty
-    }
-    ignored_args = positional_args | set(shortcut_kwargs)
-
-    shortcut_signature = inspect.signature(shortcut_method)
-    # auto_pagination: Special casing for InlineQuery.answer
-    kwargs = {name: name for name in shortcut_signature.parameters if name != 'auto_pagination'}
-
-    def make_assertion(**kw):
-        # name == value makes sure that
-        # a) we receive non-None input for all parameters
-        # b) we receive the correct input for each kwarg
-        received_kwargs = {
-            name for name, value in kw.items() if name in ignored_args or value == name
-        }
-        if not received_kwargs == expected_args:
-            raise Exception(
-                f'{orig_bot_method.__name__} did not receive correct value for the parameters '
-                f'{expected_args - received_kwargs}'
-            )
-
-        if bot_method_name == 'get_file':
-            # This is here mainly for PassportFile.get_file, which calls .set_credentials on the
-            # return value
-            return File(file_id='result', file_unique_id='result')
-        return True
-
-    setattr(bot, bot_method_name, make_assertion)
-    try:
-        shortcut_method(**kwargs)
-    except Exception as exc:
-        raise exc
-    finally:
-        setattr(bot, bot_method_name, orig_bot_method)
-
-    return True
-
-
-def check_defaults_handling(
-    method: Callable,
-    bot: ExtBot,
-    return_value=None,
-) -> bool:
-    """
-    Checks that tg.ext.Defaults are handled correctly.
-
-    Args:
-        method: The shortcut/bot_method
-        bot: The bot
-        return_value: Optional. The return value of Bot._post that the method expects. Defaults to
-            None. get_file is automatically handled.
-
-    """
-
-    def build_kwargs(signature: inspect.Signature, default_kwargs, dfv: Any = DEFAULT_NONE):
-        kws = {}
-        for name, param in signature.parameters.items():
-            # For required params we need to pass something
-            if param.default == param.empty:
-                # Some special casing
-                if name == 'permissions':
-                    kws[name] = ChatPermissions()
-                elif name in ['prices', 'media', 'results', 'commands', 'errors']:
-                    kws[name] = []
-                elif name == 'ok':
-                    kws['ok'] = False
-                    kws['error_message'] = 'error'
-                else:
-                    kws[name] = True
-            # pass values for params that can have defaults only if we don't want to use the
-            # standard default
-            elif name in default_kwargs:
-                if dfv != DEFAULT_NONE:
-                    kws[name] = dfv
-            # Some special casing for methods that have "exactly one of the optionals" type args
-            elif name in ['location', 'contact', 'venue', 'inline_message_id']:
-                kws[name] = True
-        return kws
-
-    shortcut_signature = inspect.signature(method)
-    kwargs_need_default = [
-        kwarg
-        for kwarg, value in shortcut_signature.parameters.items()
-        if isinstance(value.default, DefaultValue)
-    ]
-    # shortcut_signature.parameters['timeout'] is of type DefaultValue
-    method_timeout = shortcut_signature.parameters['timeout'].default.value
-
-    default_kwarg_names = kwargs_need_default
-    # special case explanation_parse_mode of Bot.send_poll:
-    if 'explanation_parse_mode' in default_kwarg_names:
-        default_kwarg_names.remove('explanation_parse_mode')
-
-    defaults_no_custom_defaults = Defaults()
-    defaults_custom_defaults = Defaults(
-        **{kwarg: 'custom_default' for kwarg in default_kwarg_names}
-    )
-
-    expected_return_values = [None, []] if return_value is None else [return_value]
-
-    def make_assertion(_, data, timeout=DEFAULT_NONE, df_value=DEFAULT_NONE):
-        expected_timeout = method_timeout if df_value == DEFAULT_NONE else df_value
-        if timeout != expected_timeout:
-            pytest.fail(f'Got value {timeout} for "timeout", expected {expected_timeout}')
-
-        for arg in (dkw for dkw in kwargs_need_default if dkw != 'timeout'):
-            # 'None' should not be passed along to Telegram
-            if df_value in [None, DEFAULT_NONE]:
-                if arg in data:
-                    pytest.fail(
-                        f'Got value {data[arg]} for argument {arg}, expected it to be absent'
-                    )
-            else:
-                value = data.get(arg, '`not passed at all`')
-                if value != df_value:
-                    pytest.fail(f'Got value {value} for argument {arg} instead of {df_value}')
-
-        if method.__name__ in ['get_file', 'get_small_file', 'get_big_file']:
-            # This is here mainly for PassportFile.get_file, which calls .set_credentials on the
-            # return value
-            out = File(file_id='result', file_unique_id='result')
-            nonlocal expected_return_values
-            expected_return_values = [out]
-            return out.to_dict()
-        # Otherwise return None by default, as TGObject.de_json/list(None) in [None, []]
-        # That way we can check what gets passed to Request.post without having to actually
-        # make a request
-        # Some methods expect specific output, so we allow to customize that
-        return return_value
-
-    orig_post = bot.request.post
-    try:
-        for default_value, defaults in [
-            (DEFAULT_NONE, defaults_no_custom_defaults),
-            ('custom_default', defaults_custom_defaults),
-        ]:
-            bot.defaults = defaults
-            # 1: test that we get the correct default value, if we don't specify anything
-            kwargs = build_kwargs(
-                shortcut_signature,
-                kwargs_need_default,
-            )
-            assertion_callback = functools.partial(make_assertion, df_value=default_value)
-            setattr(bot.request, 'post', assertion_callback)
-            assert method(**kwargs) in expected_return_values
-
-            # 2: test that we get the manually passed non-None value
-            kwargs = build_kwargs(shortcut_signature, kwargs_need_default, dfv='non-None-value')
-            assertion_callback = functools.partial(make_assertion, df_value='non-None-value')
-            setattr(bot.request, 'post', assertion_callback)
-            assert method(**kwargs) in expected_return_values
-
-            # 3: test that we get the manually passed None value
-            kwargs = build_kwargs(
-                shortcut_signature,
-                kwargs_need_default,
-                dfv=None,
-            )
-            assertion_callback = functools.partial(make_assertion, df_value=None)
-            setattr(bot.request, 'post', assertion_callback)
-            assert method(**kwargs) in expected_return_values
-    except Exception as exc:
-        raise exc
-    finally:
-        setattr(bot.request, 'post', orig_post)
-        bot.defaults = None
-
-    return True
+@pytest.fixture(scope="session")
+def dummy_message_dict(dummy_message):
+    return dummy_message.to_dict()

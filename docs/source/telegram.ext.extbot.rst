@@ -1,9 +1,6 @@
-:github_url: https://github.com/python-telegram-bot/python-telegram-bot/blob/master/telegram/ext/extbot.py
-
-telegram.ext.ExtBot
-===================
+ExtBot
+======
 
 .. autoclass:: telegram.ext.ExtBot
     :show-inheritance:
-
-    .. autofunction:: telegram.ext.ExtBot.insert_callback_data
+    :members: insert_callback_data, defaults, rate_limiter, initialize, shutdown, callback_data_cache

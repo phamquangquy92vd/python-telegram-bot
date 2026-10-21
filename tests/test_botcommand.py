@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,47 +20,44 @@
 import pytest
 
 from telegram import BotCommand, Dice
+from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def bot_command():
-    return BotCommand(command='start', description='A command')
+    return BotCommand(command="start", description="A command")
 
 
-class TestBotCommand:
-    command = 'start'
-    description = 'A command'
+class TestBotCommandWithoutRequest:
+    command = "start"
+    description = "A command"
 
-    def test_slot_behaviour(self, bot_command, recwarn, mro_slots):
+    def test_slot_behaviour(self, bot_command):
         for attr in bot_command.__slots__:
-            assert getattr(bot_command, attr, 'err') != 'err', f"got extra slot '{attr}'"
-        assert not bot_command.__dict__, f"got missing slot(s): {bot_command.__dict__}"
+            assert getattr(bot_command, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(bot_command)) == len(set(mro_slots(bot_command))), "duplicate slot"
-        bot_command.custom, bot_command.command = 'should give warning', self.command
-        assert len(recwarn) == 1 and 'custom' in str(recwarn[0].message), recwarn.list
 
-    def test_de_json(self, bot):
-        json_dict = {'command': self.command, 'description': self.description}
-        bot_command = BotCommand.de_json(json_dict, bot)
+    def test_de_json(self, offline_bot):
+        json_dict = {"command": self.command, "description": self.description}
+        bot_command = BotCommand.de_json(json_dict, offline_bot)
+        assert bot_command.api_kwargs == {}
 
         assert bot_command.command == self.command
         assert bot_command.description == self.description
-
-        assert BotCommand.de_json(None, bot) is None
 
     def test_to_dict(self, bot_command):
         bot_command_dict = bot_command.to_dict()
 
         assert isinstance(bot_command_dict, dict)
-        assert bot_command_dict['command'] == bot_command.command
-        assert bot_command_dict['description'] == bot_command.description
+        assert bot_command_dict["command"] == bot_command.command
+        assert bot_command_dict["description"] == bot_command.description
 
     def test_equality(self):
-        a = BotCommand('start', 'some description')
-        b = BotCommand('start', 'some description')
-        c = BotCommand('start', 'some other description')
-        d = BotCommand('hepl', 'some description')
-        e = Dice(4, 'emoji')
+        a = BotCommand("start", "some description")
+        b = BotCommand("start", "some description")
+        c = BotCommand("start", "some other description")
+        d = BotCommand("hepl", "some description")
+        e = Dice(4, "emoji")
 
         assert a == b
         assert hash(a) == hash(b)

@@ -1,0 +1,146 @@
+name: Publish to Test PyPI
+
+on:
+  # manually trigger the workflow
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build Distribution
+    runs-on: ubuntu-latest
+    outputs:
+      TAG: ${{ steps.get_tag.outputs.TAG }}
+    permissions:
+      # for uploading artifacts
+      actions: write
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+      - name: Install pypa/build
+        run: >-
+          python3 -m pip install build --user
+      - name: Build a binary wheel and a source tarball
+        run: python3 -m build
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Get Tag Name
+        id: get_tag
+        run: |
+          pip install .
+          TAG=$(python -c "from telegram import __version__; print(f'v{__version__}')")
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+
+  publish-to-test-pypi:
+    name: Publish to Test PyPI
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: release_test_pypi
+      url: https://test.pypi.org/p/python-telegram-bot
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for trusted publishing
+      actions: read  # for downloading artifacts
+
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish to Test PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  compute-signatures:
+    name: Compute SHA1 Sums and Sign with Sigstore
+    runs-on: ubuntu-latest
+    needs:
+      - publish-to-test-pypi
+
+    permissions:
+      id-token: write  # IMPORTANT: mandatory for sigstore
+      actions: write  # for up/downloading artifacts
+
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Compute SHA1 Sums
+        run: |
+          # Compute SHA1 sum of the distribution packages and save it to a file with the same name,
+          # but with .sha1 extension
+          for file in dist/*; do
+              sha1sum $file > $file.sha1
+          done
+      - name: Sign the dists with Sigstore
+        uses: sigstore/gh-action-sigstore-python@790bc6befb9d733738f18d8f895854b453640ec9 # v3.5.0
+        with:
+          inputs: >-
+            ./dist/*.tar.gz
+            ./dist/*.whl
+      - name: Store the distribution packages and signatures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-package-distributions-and-signatures
+          path: dist/
+
+  github-test-release:
+    name: Upload to GitHub Release Draft
+    needs:
+      - build
+      - compute-signatures
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      actions: read  # for downloading artifacts
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Download all the dists
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions-and-signatures
+          path: dist/
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.TAG }}
+        # Create a tag and a GitHub Release *draft*. The description is filled by the static
+        # template, we just insert the correct tag in the template.
+        run: >-
+          sed "s/{tag}/$TAG/g" .github/workflows/assets/release_template.html |
+          gh release create
+          "$TAG"
+          --repo '${{ github.repository }}'
+          --draft
+          --notes-file -
+      - name: Upload artifact signatures to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.TAG }}
+        # Upload to GitHub Release using the `gh` CLI.
+        # `dist/` contains the built packages, and the
+        # sigstore-produced signatures and certificates.
+        run: >-
+          gh release upload
+          "$TAG" dist/**
+          --repo '${{ github.repository }}'

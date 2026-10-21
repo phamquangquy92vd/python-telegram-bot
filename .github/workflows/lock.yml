@@ -3,16 +3,23 @@ name: 'Lock Closed Threads'
 on:
   schedule:
     - cron: '8 4 * * *'
-    - cron: '42 17 * * *'
+
+permissions: {}
 
 jobs:
   lock:
     runs-on: ubuntu-latest
+    permissions:
+      # For locking the threads
+      issues: write
+      pull-requests: write
     steps:
-      - uses: dessant/lock-threads@v2.0.1
+      - uses: dessant/lock-threads@89ae32b08ed1a541efecbab17912962a5e38981c # v6.0.2
         with:
           github-token: ${{ github.token }}
-          issue-lock-inactive-days: '7'
+          issue-inactive-days: '7'
           issue-lock-reason: ''
-          pr-lock-inactive-days: '7'
+          pr-inactive-days: '7'
           pr-lock-reason: ''
+          # Don't lock Discussions
+          process-only: 'issues, prs'

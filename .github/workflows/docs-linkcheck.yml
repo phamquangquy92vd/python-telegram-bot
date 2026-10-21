@@ -1,0 +1,41 @@
+name: Check Links in Documentation
+on:
+  schedule:
+    # First day of month at 05:46 in every 2nd month
+    - cron: '46 5 1 */2 *'
+  pull_request:
+    paths:
+      - .github/workflows/docs-linkcheck.yml
+
+permissions: {}
+
+jobs:
+  test-sphinx-build:
+    name: test-sphinx-linkcheck
+    runs-on: ${{matrix.os}}
+    strategy:
+      matrix:
+        python-version: ['3.12']
+        os: [ubuntu-latest]
+      fail-fast: False
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -W ignore -m pip install --upgrade pip
+          python -W ignore -m pip install .[all] --group all
+      - name: Check Links
+        run: sphinx-build docs/source docs/build/html --keep-going -j auto -b linkcheck
+      - name: Upload linkcheck output
+        # Run also if the previous steps failed
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linkcheck-output
+          path: docs/build/html/output.*

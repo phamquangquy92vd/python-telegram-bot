@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-# pylint: disable=C0116,W0613
+# pylint: disable=unused-argument
 # This program is dedicated to the public domain under the CC0 license.
 
 """
 First, a few callback functions are defined. Then, those functions are passed to
-the Dispatcher and registered at their respective places.
+the Application and registered at their respective places.
 Then, the bot is started and runs until we press Ctrl-C on the command line.
 
 Usage:
@@ -15,92 +15,93 @@ bot.
 """
 
 import logging
-from typing import Dict
 
-from telegram import ReplyKeyboardMarkup, Update, ReplyKeyboardRemove
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
-    Updater,
+    Application,
     CommandHandler,
-    MessageHandler,
-    Filters,
+    ContextTypes,
     ConversationHandler,
+    MessageHandler,
     PicklePersistence,
-    CallbackContext,
+    filters,
 )
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+# set higher logging level for httpx to avoid all GET and POST requests being logged
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
 CHOOSING, TYPING_REPLY, TYPING_CHOICE = range(3)
 
 reply_keyboard = [
-    ['Age', 'Favourite colour'],
-    ['Number of siblings', 'Something else...'],
-    ['Done'],
+    ["Age", "Favourite colour"],
+    ["Number of siblings", "Something else..."],
+    ["Done"],
 ]
 markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
 
 
-def facts_to_str(user_data: Dict[str, str]) -> str:
+def facts_to_str(user_data: dict[str, str]) -> str:
     """Helper function for formatting the gathered user info."""
-    facts = [f'{key} - {value}' for key, value in user_data.items()]
-    return "\n".join(facts).join(['\n', '\n'])
+    facts = [f"{key} - {value}" for key, value in user_data.items()]
+    return "\n".join(facts).join(["\n", "\n"])
 
 
-def start(update: Update, context: CallbackContext) -> int:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation, display any stored data and ask user for input."""
     reply_text = "Hi! My name is Doctor Botter."
     if context.user_data:
         reply_text += (
             f" You already told me your {', '.join(context.user_data.keys())}. Why don't you "
-            f"tell me something more about yourself? Or change anything I already know."
+            "tell me something more about yourself? Or change anything I already know."
         )
     else:
         reply_text += (
             " I will hold a more complex conversation with you. Why don't you tell me "
             "something about yourself?"
         )
-    update.message.reply_text(reply_text, reply_markup=markup)
+    await update.message.reply_text(reply_text, reply_markup=markup)
 
     return CHOOSING
 
 
-def regular_choice(update: Update, context: CallbackContext) -> int:
+async def regular_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for info about the selected predefined choice."""
     text = update.message.text.lower()
-    context.user_data['choice'] = text
+    context.user_data["choice"] = text
     if context.user_data.get(text):
         reply_text = (
-            f'Your {text}? I already know the following about that: {context.user_data[text]}'
+            f"Your {text}? I already know the following about that: {context.user_data[text]}"
         )
     else:
-        reply_text = f'Your {text}? Yes, I would love to hear about that!'
-    update.message.reply_text(reply_text)
+        reply_text = f"Your {text}? Yes, I would love to hear about that!"
+    await update.message.reply_text(reply_text)
 
     return TYPING_REPLY
 
 
-def custom_choice(update: Update, context: CallbackContext) -> int:
+async def custom_choice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Ask the user for a description of a custom category."""
-    update.message.reply_text(
+    await update.message.reply_text(
         'Alright, please send me the category first, for example "Most impressive skill"'
     )
 
     return TYPING_CHOICE
 
 
-def received_information(update: Update, context: CallbackContext) -> int:
+async def received_information(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store info provided by user and ask for the next category."""
     text = update.message.text
-    category = context.user_data['choice']
+    category = context.user_data["choice"]
     context.user_data[category] = text.lower()
-    del context.user_data['choice']
+    del context.user_data["choice"]
 
-    update.message.reply_text(
+    await update.message.reply_text(
         "Neat! Just so you know, this is what you already told me:"
         f"{facts_to_str(context.user_data)}"
         "You can tell me more, or change your opinion on something.",
@@ -110,19 +111,19 @@ def received_information(update: Update, context: CallbackContext) -> int:
     return CHOOSING
 
 
-def show_data(update: Update, context: CallbackContext) -> None:
+async def show_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display the gathered info."""
-    update.message.reply_text(
+    await update.message.reply_text(
         f"This is what you already told me: {facts_to_str(context.user_data)}"
     )
 
 
-def done(update: Update, context: CallbackContext) -> int:
+async def done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Display the gathered info and end the conversation."""
-    if 'choice' in context.user_data:
-        del context.user_data['choice']
+    if "choice" in context.user_data:
+        del context.user_data["choice"]
 
-    update.message.reply_text(
+    await update.message.reply_text(
         f"I learned these facts about you: {facts_to_str(context.user_data)}Until next time!",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -131,53 +132,45 @@ def done(update: Update, context: CallbackContext) -> int:
 
 def main() -> None:
     """Run the bot."""
-    # Create the Updater and pass it your bot's token.
-    persistence = PicklePersistence(filename='conversationbot')
-    updater = Updater("TOKEN", persistence=persistence)
-
-    # Get the dispatcher to register handlers
-    dispatcher = updater.dispatcher
+    # Create the Application and pass it your bot's token.
+    persistence = PicklePersistence(filepath="conversationbot")
+    application = Application.builder().token("TOKEN").persistence(persistence).build()
 
     # Add conversation handler with the states CHOOSING, TYPING_CHOICE and TYPING_REPLY
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
+        entry_points=[CommandHandler("start", start)],
         states={
             CHOOSING: [
                 MessageHandler(
-                    Filters.regex('^(Age|Favourite colour|Number of siblings)$'), regular_choice
+                    filters.Regex("^(Age|Favourite colour|Number of siblings)$"), regular_choice
                 ),
-                MessageHandler(Filters.regex('^Something else...$'), custom_choice),
+                MessageHandler(filters.Regex("^Something else...$"), custom_choice),
             ],
             TYPING_CHOICE: [
                 MessageHandler(
-                    Filters.text & ~(Filters.command | Filters.regex('^Done$')), regular_choice
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")), regular_choice
                 )
             ],
             TYPING_REPLY: [
                 MessageHandler(
-                    Filters.text & ~(Filters.command | Filters.regex('^Done$')),
+                    filters.TEXT & ~(filters.COMMAND | filters.Regex("^Done$")),
                     received_information,
                 )
             ],
         },
-        fallbacks=[MessageHandler(Filters.regex('^Done$'), done)],
+        fallbacks=[MessageHandler(filters.Regex("^Done$"), done)],
         name="my_conversation",
         persistent=True,
     )
 
-    dispatcher.add_handler(conv_handler)
+    application.add_handler(conv_handler)
 
-    show_data_handler = CommandHandler('show_data', show_data)
-    dispatcher.add_handler(show_data_handler)
+    show_data_handler = CommandHandler("show_data", show_data)
+    application.add_handler(show_data_handler)
 
-    # Start the Bot
-    updater.start_polling()
-
-    # Run the bot until you press Ctrl-C or the process receives SIGINT,
-    # SIGTERM or SIGABRT. This should be used most of the time, since
-    # start_polling() is non-blocking and will stop the bot gracefully.
-    updater.idle()
+    # Run the bot until the user presses Ctrl-C
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

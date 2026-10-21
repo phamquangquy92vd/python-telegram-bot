@@ -1,0 +1,274 @@
+#!/usr/bin/env python
+# A library that provides a Python interface to the Telegram Bot API
+# Copyright (C) 2015-2026
+# Leandro Toledo de Souza <devs@python-telegram-bot.org>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser Public License for more details.
+#
+# You should have received a copy of the GNU Lesser Public License
+# along with this program.  If not, see [http://www.gnu.org/licenses/].
+"""This module contains an object that represents a Telegram EncryptedPassportElement."""
+
+from base64 import b64decode
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Self
+
+from telegram._passport.credentials import decrypt_json
+from telegram._passport.data import IdDocumentData, PersonalDetails, ResidentialAddress
+from telegram._passport.passportfile import PassportFile, with_file_credentials
+from telegram._telegramobject import TelegramObject
+from telegram._utils.argumentparsing import parse_sequence_arg
+from telegram._utils.types import JSONDict
+
+if TYPE_CHECKING:
+    from telegram import Bot, Credentials, FileCredentials
+
+
+def _add_file_credentials(
+    data: JSONDict | None, credentials: "FileCredentials | None"
+) -> JSONDict | None:
+    if data is None:
+        return None
+
+    return with_file_credentials(data, credentials)
+
+
+def _add_file_credentials_to_list(
+    data: list[JSONDict] | None, credentials: Sequence["FileCredentials"]
+) -> list[JSONDict] | None:
+    if data is None:
+        return None
+
+    return [
+        with_file_credentials(passport_file, credentials[index])
+        for index, passport_file in enumerate(data)
+    ]
+
+
+class EncryptedPassportElement(TelegramObject):
+    """
+    Contains information about documents or other Telegram Passport elements shared with the bot
+    by the user. The data has been automatically decrypted by python-telegram-bot.
+
+    Objects of this class are comparable in terms of equality. Two objects of this class are
+    considered equal, if their :attr:`type`, :attr:`data`, :attr:`phone_number`, :attr:`email`,
+    :attr:`files`, :attr:`front_side`, :attr:`reverse_side` and :attr:`selfie` are equal.
+
+    Note:
+        This object is decrypted only when originating from
+        :attr:`telegram.PassportData.decrypted_data`.
+
+    Args:
+        type (:obj:`str`): Element type. One of "personal_details", "passport", "driver_license",
+            "identity_card", "internal_passport", "address", "utility_bill", "bank_statement",
+            "rental_agreement", "passport_registration", "temporary_registration", "phone_number",
+            "email".
+        hash (:obj:`str`): Base64-encoded element hash for using in
+            :class:`telegram.PassportElementErrorUnspecified`.
+        data (:class:`telegram.PersonalDetails` | :class:`telegram.IdDocumentData` | \
+            :class:`telegram.ResidentialAddress` | :obj:`str`, optional):
+            Decrypted or encrypted data; available only for "personal_details", "passport",
+            "driver_license", "identity_card", "internal_passport" and "address" types.
+        phone_number (:obj:`str`, optional): User's verified phone number; available only for
+            "phone_number" type.
+        email (:obj:`str`, optional): User's verified email address; available only for "email"
+            type.
+        files (Sequence[:class:`telegram.PassportFile`], optional): Array of encrypted/decrypted
+            files with documents provided by the user; available only for "utility_bill",
+            "bank_statement", "rental_agreement", "passport_registration" and
+            "temporary_registration" types.
+
+            .. versionchanged:: 20.0
+                |sequenceclassargs|
+
+        front_side (:class:`telegram.PassportFile`, optional): Encrypted/decrypted file with the
+            front side of the document, provided by the user; Available only for "passport",
+            "driver_license", "identity_card" and "internal_passport".
+        reverse_side (:class:`telegram.PassportFile`, optional): Encrypted/decrypted file with the
+            reverse side of the document, provided by the user; Available only for
+            "driver_license" and "identity_card".
+        selfie (:class:`telegram.PassportFile`, optional): Encrypted/decrypted file with the
+            selfie of the user holding a document, provided by the user; available if requested for
+            "passport", "driver_license", "identity_card" and "internal_passport".
+        translation (Sequence[:class:`telegram.PassportFile`], optional): Array of
+            encrypted/decrypted files with translated versions of documents provided by the user;
+            available if requested requested for "passport", "driver_license", "identity_card",
+            "internal_passport", "utility_bill", "bank_statement", "rental_agreement",
+            "passport_registration" and "temporary_registration" types.
+
+            .. versionchanged:: 20.0
+                |sequenceclassargs|
+
+    Attributes:
+        type (:obj:`str`): Element type. One of "personal_details", "passport", "driver_license",
+            "identity_card", "internal_passport", "address", "utility_bill", "bank_statement",
+            "rental_agreement", "passport_registration", "temporary_registration", "phone_number",
+            "email".
+        hash (:obj:`str`): Base64-encoded element hash for using in
+            :class:`telegram.PassportElementErrorUnspecified`.
+        data (:class:`telegram.PersonalDetails` | :class:`telegram.IdDocumentData` | \
+            :class:`telegram.ResidentialAddress` | :obj:`str`):
+            Optional. Decrypted or encrypted data; available only for "personal_details",
+            "passport", "driver_license", "identity_card", "internal_passport" and "address" types.
+        phone_number (:obj:`str`): Optional. User's verified phone number; available only for
+            "phone_number" type.
+        email (:obj:`str`): Optional. User's verified email address; available only for "email"
+            type.
+        files (tuple[:class:`telegram.PassportFile`]): Optional. Array of encrypted/decrypted
+            files with documents provided by the user; available only for "utility_bill",
+            "bank_statement", "rental_agreement", "passport_registration" and
+            "temporary_registration" types.
+
+            .. versionchanged:: 20.0
+
+                * |tupleclassattrs|
+                * |alwaystuple|
+
+        front_side (:class:`telegram.PassportFile`): Optional. Encrypted/decrypted file with the
+            front side of the document, provided by the user; available only for "passport",
+            "driver_license", "identity_card" and "internal_passport".
+        reverse_side (:class:`telegram.PassportFile`): Optional. Encrypted/decrypted file with the
+            reverse side of the document, provided by the user; available only for "driver_license"
+            and "identity_card".
+        selfie (:class:`telegram.PassportFile`): Optional. Encrypted/decrypted file with the
+            selfie of the user holding a document, provided by the user; available if requested for
+            "passport", "driver_license", "identity_card" and "internal_passport".
+        translation (tuple[:class:`telegram.PassportFile`]): Optional. Array of
+            encrypted/decrypted files with translated versions of documents provided by the user;
+            available if requested for "passport", "driver_license", "identity_card",
+            "internal_passport", "utility_bill", "bank_statement", "rental_agreement",
+            "passport_registration" and "temporary_registration" types.
+
+            .. versionchanged:: 20.0
+
+                * |tupleclassattrs|
+                * |alwaystuple|
+
+    """
+
+    __slots__ = (
+        "data",
+        "email",
+        "files",
+        "front_side",
+        "hash",
+        "phone_number",
+        "reverse_side",
+        "selfie",
+        "translation",
+        "type",
+    )
+
+    def __init__(
+        self,
+        type: str,  # pylint: disable=redefined-builtin
+        hash: str,  # pylint: disable=redefined-builtin
+        data: PersonalDetails | IdDocumentData | ResidentialAddress | None = None,
+        phone_number: str | None = None,
+        email: str | None = None,
+        files: Sequence[PassportFile] | None = None,
+        front_side: PassportFile | None = None,
+        reverse_side: PassportFile | None = None,
+        selfie: PassportFile | None = None,
+        translation: Sequence[PassportFile] | None = None,
+        *,
+        api_kwargs: JSONDict | None = None,
+    ):
+        super().__init__(api_kwargs=api_kwargs)
+
+        # Required
+        self.type: str = type
+        # Optionals
+        self.data: PersonalDetails | IdDocumentData | ResidentialAddress | None = data
+        self.phone_number: str | None = phone_number
+        self.email: str | None = email
+        self.files: tuple[PassportFile, ...] = parse_sequence_arg(files)
+        self.front_side: PassportFile | None = front_side
+        self.reverse_side: PassportFile | None = reverse_side
+        self.selfie: PassportFile | None = selfie
+        self.translation: tuple[PassportFile, ...] = parse_sequence_arg(translation)
+        self.hash: str = hash
+
+        self._id_attrs = (
+            self.type,
+            self.data,
+            self.phone_number,
+            self.email,
+            self.files,
+            self.front_side,
+            self.reverse_side,
+            self.selfie,
+        )
+
+        self._freeze()
+
+    @classmethod
+    def de_json_decrypted(
+        cls, data: JSONDict, bot: "Bot | None", credentials: "Credentials"
+    ) -> Self:
+        """Variant of :meth:`telegram.TelegramObject.de_json` that also takes into account
+        passport credentials.
+
+        Args:
+            data (dict[:obj:`str`, ...]): The JSON data.
+            bot (:class:`telegram.Bot` | :obj:`None`): The bot associated with these object.
+                May be :obj:`None`, in which case shortcut methods will not be available.
+
+                .. versionchanged:: 21.4
+                   :paramref:`bot` is now optional and defaults to :obj:`None`
+
+                .. deprecated:: 21.4
+                   This argument will be converted to an optional argument in future versions.
+            credentials (:class:`telegram.FileCredentials`): The credentials
+
+        Returns:
+            :class:`telegram.EncryptedPassportElement`:
+
+        """
+
+        if data["type"] not in ("phone_number", "email"):
+            secure_data = getattr(credentials.secure_data, data["type"])
+
+            if secure_data.data is not None:
+                # If not already decrypted
+                if not isinstance(data["data"], dict):
+                    data["data"] = decrypt_json(
+                        b64decode(secure_data.data.secret),
+                        b64decode(secure_data.data.hash),
+                        b64decode(data["data"]),
+                    )
+                if data["type"] == "personal_details":
+                    data["data"] = PersonalDetails.de_json(data["data"], bot=bot)
+                elif data["type"] in (
+                    "passport",
+                    "internal_passport",
+                    "driver_license",
+                    "identity_card",
+                ):
+                    data["data"] = IdDocumentData.de_json(data["data"], bot=bot)
+                elif data["type"] == "address":
+                    data["data"] = ResidentialAddress.de_json(data["data"], bot=bot)
+
+            # Keep the file values as dictionaries so that the generic de_json plan performs
+            # their one and only conversion to PassportFile objects.
+            data["files"] = _add_file_credentials_to_list(data.get("files"), secure_data.files)
+            data["front_side"] = _add_file_credentials(
+                data.get("front_side"), secure_data.front_side
+            )
+            data["reverse_side"] = _add_file_credentials(
+                data.get("reverse_side"), secure_data.reverse_side
+            )
+            data["selfie"] = _add_file_credentials(data.get("selfie"), secure_data.selfie)
+            data["translation"] = _add_file_credentials_to_list(
+                data.get("translation"), secure_data.translation
+            )
+
+        return super().de_json(data=data, bot=bot)

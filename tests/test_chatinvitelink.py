@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,116 +16,191 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
-import datetime
+import datetime as dtm
 
 import pytest
 
-from telegram import User, ChatInviteLink
-from telegram.utils.helpers import to_timestamp
+from telegram import ChatInviteLink, User
+from telegram._utils.datetime import UTC, to_timestamp
+from telegram.warnings import PTBDeprecationWarning
+from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture(scope='class')
+@pytest.fixture(scope="module")
 def creator():
-    return User(1, 'First name', False)
+    return User(1, "First name", False)
 
 
-@pytest.fixture(scope='class')
+@pytest.fixture(scope="module")
 def invite_link(creator):
     return ChatInviteLink(
-        TestChatInviteLink.link,
+        ChatInviteLinkTestBase.link,
         creator,
-        TestChatInviteLink.primary,
-        TestChatInviteLink.revoked,
-        expire_date=TestChatInviteLink.expire_date,
-        member_limit=TestChatInviteLink.member_limit,
-        name=TestChatInviteLink.name,
-        pending_join_request_count=TestChatInviteLink.pending_join_request_count,
+        ChatInviteLinkTestBase.creates_join_request,
+        ChatInviteLinkTestBase.primary,
+        ChatInviteLinkTestBase.revoked,
+        expire_date=ChatInviteLinkTestBase.expire_date,
+        member_limit=ChatInviteLinkTestBase.member_limit,
+        name=ChatInviteLinkTestBase.name,
+        pending_join_request_count=ChatInviteLinkTestBase.pending_join_request_count,
+        subscription_period=ChatInviteLinkTestBase.subscription_period,
+        subscription_price=ChatInviteLinkTestBase.subscription_price,
     )
 
 
-class TestChatInviteLink:
-
+class ChatInviteLinkTestBase:
     link = "thisialink"
+    creates_join_request = False
     primary = True
     revoked = False
-    expire_date = datetime.datetime.utcnow()
+    expire_date = dtm.datetime.now(dtm.UTC)
     member_limit = 42
-    name = 'LinkName'
+    name = "LinkName"
     pending_join_request_count = 42
+    subscription_period = dtm.timedelta(seconds=43)
+    subscription_price = 44
 
-    def test_slot_behaviour(self, recwarn, mro_slots, invite_link):
+
+class TestChatInviteLinkWithoutRequest(ChatInviteLinkTestBase):
+    def test_slot_behaviour(self, invite_link):
         for attr in invite_link.__slots__:
-            assert getattr(invite_link, attr, 'err') != 'err', f"got extra slot '{attr}'"
-        assert not invite_link.__dict__, f"got missing slot(s): {invite_link.__dict__}"
+            assert getattr(invite_link, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(invite_link)) == len(set(mro_slots(invite_link))), "duplicate slot"
-        invite_link.custom = 'should give warning'
-        assert len(recwarn) == 1 and 'custom' in str(recwarn[0].message), recwarn.list
 
-    def test_de_json_required_args(self, bot, creator):
+    def test_de_json_required_args(self, offline_bot, creator):
         json_dict = {
-            'invite_link': self.link,
-            'creator': creator.to_dict(),
-            'is_primary': self.primary,
-            'is_revoked': self.revoked,
+            "invite_link": self.link,
+            "creator": creator.to_dict(),
+            "creates_join_request": self.creates_join_request,
+            "is_primary": self.primary,
+            "is_revoked": self.revoked,
         }
 
-        invite_link = ChatInviteLink.de_json(json_dict, bot)
+        invite_link = ChatInviteLink.de_json(json_dict, offline_bot)
+        assert invite_link.api_kwargs == {}
 
         assert invite_link.invite_link == self.link
         assert invite_link.creator == creator
+        assert invite_link.creates_join_request == self.creates_join_request
         assert invite_link.is_primary == self.primary
         assert invite_link.is_revoked == self.revoked
 
-    def test_de_json_all_args(self, bot, creator):
+    def test_de_json_all_args(self, offline_bot, creator):
         json_dict = {
-            'invite_link': self.link,
-            'creator': creator.to_dict(),
-            'is_primary': self.primary,
-            'is_revoked': self.revoked,
-            'expire_date': to_timestamp(self.expire_date),
-            'member_limit': str(self.member_limit),
-            'name': self.name,
-            'pending_join_request_count': str(self.pending_join_request_count),
+            "invite_link": self.link,
+            "creator": creator.to_dict(),
+            "creates_join_request": self.creates_join_request,
+            "is_primary": self.primary,
+            "is_revoked": self.revoked,
+            "expire_date": to_timestamp(self.expire_date),
+            "member_limit": self.member_limit,
+            "name": self.name,
+            "pending_join_request_count": str(self.pending_join_request_count),
+            "subscription_period": int(self.subscription_period.total_seconds()),
+            "subscription_price": self.subscription_price,
         }
 
-        invite_link = ChatInviteLink.de_json(json_dict, bot)
+        invite_link = ChatInviteLink.de_json(json_dict, offline_bot)
+        assert invite_link.api_kwargs == {}
 
         assert invite_link.invite_link == self.link
         assert invite_link.creator == creator
+        assert invite_link.creates_join_request == self.creates_join_request
         assert invite_link.is_primary == self.primary
         assert invite_link.is_revoked == self.revoked
-        assert pytest.approx(invite_link.expire_date == self.expire_date)
+        assert abs(invite_link.expire_date - self.expire_date) < dtm.timedelta(seconds=1)
         assert to_timestamp(invite_link.expire_date) == to_timestamp(self.expire_date)
         assert invite_link.member_limit == self.member_limit
         assert invite_link.name == self.name
         assert invite_link.pending_join_request_count == self.pending_join_request_count
+        assert invite_link._subscription_period == self.subscription_period
+        assert invite_link.subscription_price == self.subscription_price
+
+    def test_de_json_localization(self, tz_bot, offline_bot, raw_bot, creator):
+        json_dict = {
+            "invite_link": self.link,
+            "creator": creator.to_dict(),
+            "creates_join_request": self.creates_join_request,
+            "is_primary": self.primary,
+            "is_revoked": self.revoked,
+            "expire_date": to_timestamp(self.expire_date),
+            "member_limit": self.member_limit,
+            "name": self.name,
+            "pending_join_request_count": str(self.pending_join_request_count),
+        }
+
+        invite_link_raw = ChatInviteLink.de_json(json_dict, raw_bot)
+        invite_link_bot = ChatInviteLink.de_json(json_dict, offline_bot)
+        invite_link_tz = ChatInviteLink.de_json(json_dict, tz_bot)
+
+        # comparing utcoffsets because comparing timezones is unpredicatable
+        invite_offset = invite_link_tz.expire_date.utcoffset()
+        tz_bot_offset = tz_bot.defaults.tzinfo.utcoffset(
+            invite_link_tz.expire_date.replace(tzinfo=None)
+        )
+
+        assert invite_link_raw.expire_date.tzinfo == UTC
+        assert invite_link_bot.expire_date.tzinfo == UTC
+        assert invite_offset == tz_bot_offset
 
     def test_to_dict(self, invite_link):
         invite_link_dict = invite_link.to_dict()
         assert isinstance(invite_link_dict, dict)
-        assert invite_link_dict['creator'] == invite_link.creator.to_dict()
-        assert invite_link_dict['invite_link'] == invite_link.invite_link
-        assert invite_link_dict['is_primary'] == self.primary
-        assert invite_link_dict['is_revoked'] == self.revoked
-        assert invite_link_dict['expire_date'] == to_timestamp(self.expire_date)
-        assert invite_link_dict['member_limit'] == self.member_limit
-        assert invite_link_dict['name'] == self.name
-        assert invite_link_dict['pending_join_request_count'] == self.pending_join_request_count
+        assert invite_link_dict["creator"] == invite_link.creator.to_dict()
+        assert invite_link_dict["invite_link"] == invite_link.invite_link
+        assert invite_link_dict["creates_join_request"] == invite_link.creates_join_request
+        assert invite_link_dict["is_primary"] == self.primary
+        assert invite_link_dict["is_revoked"] == self.revoked
+        assert invite_link_dict["expire_date"] == to_timestamp(self.expire_date)
+        assert invite_link_dict["member_limit"] == self.member_limit
+        assert invite_link_dict["name"] == self.name
+        assert invite_link_dict["pending_join_request_count"] == self.pending_join_request_count
+        assert invite_link_dict["subscription_period"] == int(
+            self.subscription_period.total_seconds()
+        )
+        assert isinstance(invite_link_dict["subscription_period"], int)
+        assert invite_link_dict["subscription_price"] == self.subscription_price
+
+    def test_time_period_properties(self, PTB_TIMEDELTA, invite_link):
+        if PTB_TIMEDELTA:
+            assert invite_link.subscription_period == self.subscription_period
+            assert isinstance(invite_link.subscription_period, dtm.timedelta)
+        else:
+            assert invite_link.subscription_period == int(self.subscription_period.total_seconds())
+            assert isinstance(invite_link.subscription_period, int)
+
+    def test_time_period_int_deprecated(self, recwarn, PTB_TIMEDELTA, invite_link):
+        invite_link.subscription_period
+
+        if PTB_TIMEDELTA:
+            assert len(recwarn) == 0
+        else:
+            assert len(recwarn) == 1
+            assert "`subscription_period` will be of type `datetime.timedelta`" in str(
+                recwarn[0].message
+            )
+            assert recwarn[0].category is PTBDeprecationWarning
 
     def test_equality(self):
-        a = ChatInviteLink("link", User(1, '', False), True, True)
-        b = ChatInviteLink("link", User(1, '', False), True, True)
-        d = ChatInviteLink("link", User(2, '', False), False, True)
-        d2 = ChatInviteLink("notalink", User(1, '', False), False, True)
-        d3 = ChatInviteLink("notalink", User(1, '', False), True, True)
-        e = User(1, '', False)
+        a = ChatInviteLink("link", User(1, "", False), True, True, True)
+        b = ChatInviteLink("link", User(1, "", False), True, True, True)
+        c = ChatInviteLink("link", User(2, "", False), True, True, True)
+        d1 = ChatInviteLink("link", User(1, "", False), False, True, True)
+        d2 = ChatInviteLink("link", User(1, "", False), True, False, True)
+        d3 = ChatInviteLink("link", User(1, "", False), True, True, False)
+        e = ChatInviteLink("notalink", User(1, "", False), True, False, True)
+        f = ChatInviteLink("notalink", User(1, "", False), True, True, True)
+        g = User(1, "", False)
 
         assert a == b
         assert hash(a) == hash(b)
         assert a is not b
 
-        assert a != d
-        assert hash(a) != hash(d)
+        assert a != c
+        assert hash(a) != hash(c)
+
+        assert a != d1
+        assert hash(a) != hash(d1)
 
         assert a != d2
         assert hash(a) != hash(d2)
@@ -135,3 +210,9 @@ class TestChatInviteLink:
 
         assert a != e
         assert hash(a) != hash(e)
+
+        assert a != f
+        assert hash(a) != hash(f)
+
+        assert a != g
+        assert hash(a) != hash(g)

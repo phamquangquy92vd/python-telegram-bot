@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,87 +20,125 @@
 import pytest
 
 from telegram import ChatPermissions, User
+from tests.auxil.slots import mro_slots
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def chat_permissions():
     return ChatPermissions(
         can_send_messages=True,
-        can_send_media_messages=True,
         can_send_polls=True,
         can_send_other_messages=True,
         can_add_web_page_previews=True,
         can_change_info=True,
         can_invite_users=True,
         can_pin_messages=True,
+        can_manage_topics=True,
+        can_send_audios=True,
+        can_send_documents=True,
+        can_send_photos=True,
+        can_send_videos=True,
+        can_send_video_notes=True,
+        can_send_voice_notes=True,
+        can_edit_tag=True,
+        can_react_to_messages=True,
     )
 
 
-class TestChatPermissions:
+class ChatPermissionsTestBase:
     can_send_messages = True
-    can_send_media_messages = True
     can_send_polls = True
     can_send_other_messages = False
     can_add_web_page_previews = False
     can_change_info = False
     can_invite_users = None
     can_pin_messages = None
+    can_manage_topics = None
+    can_send_audios = True
+    can_send_documents = False
+    can_send_photos = None
+    can_send_videos = True
+    can_send_video_notes = False
+    can_send_voice_notes = None
+    can_edit_tag = None
+    can_react_to_messages = True
 
-    def test_slot_behaviour(self, chat_permissions, recwarn, mro_slots):
+
+class TestChatPermissionsWithoutRequest(ChatPermissionsTestBase):
+    def test_slot_behaviour(self, chat_permissions):
         inst = chat_permissions
         for attr in inst.__slots__:
-            assert getattr(inst, attr, 'err') != 'err', f"got extra slot '{attr}'"
-        assert not inst.__dict__, f"got missing slot(s): {inst.__dict__}"
+            assert getattr(inst, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(inst)) == len(set(mro_slots(inst))), "duplicate slot"
-        inst.custom, inst.can_send_polls = 'should give warning', self.can_send_polls
-        assert len(recwarn) == 1 and 'custom' in str(recwarn[0].message), recwarn.list
 
-    def test_de_json(self, bot):
+    def test_de_json(self, offline_bot):
         json_dict = {
-            'can_send_messages': self.can_send_messages,
-            'can_send_media_messages': self.can_send_media_messages,
-            'can_send_polls': self.can_send_polls,
-            'can_send_other_messages': self.can_send_other_messages,
-            'can_add_web_page_previews': self.can_add_web_page_previews,
-            'can_change_info': self.can_change_info,
-            'can_invite_users': self.can_invite_users,
-            'can_pin_messages': self.can_pin_messages,
+            "can_send_messages": self.can_send_messages,
+            "can_send_media_messages": "can_send_media_messages",
+            "can_send_polls": self.can_send_polls,
+            "can_send_other_messages": self.can_send_other_messages,
+            "can_add_web_page_previews": self.can_add_web_page_previews,
+            "can_change_info": self.can_change_info,
+            "can_invite_users": self.can_invite_users,
+            "can_pin_messages": self.can_pin_messages,
+            "can_send_audios": self.can_send_audios,
+            "can_send_documents": self.can_send_documents,
+            "can_send_photos": self.can_send_photos,
+            "can_send_videos": self.can_send_videos,
+            "can_send_video_notes": self.can_send_video_notes,
+            "can_send_voice_notes": self.can_send_voice_notes,
+            "can_edit_tag": self.can_edit_tag,
+            "can_react_to_messages": self.can_react_to_messages,
         }
-        permissions = ChatPermissions.de_json(json_dict, bot)
+        permissions = ChatPermissions.de_json(json_dict, offline_bot)
+        assert permissions.api_kwargs == {"can_send_media_messages": "can_send_media_messages"}
 
         assert permissions.can_send_messages == self.can_send_messages
-        assert permissions.can_send_media_messages == self.can_send_media_messages
         assert permissions.can_send_polls == self.can_send_polls
         assert permissions.can_send_other_messages == self.can_send_other_messages
         assert permissions.can_add_web_page_previews == self.can_add_web_page_previews
         assert permissions.can_change_info == self.can_change_info
         assert permissions.can_invite_users == self.can_invite_users
         assert permissions.can_pin_messages == self.can_pin_messages
+        assert permissions.can_manage_topics == self.can_manage_topics
+        assert permissions.can_send_audios == self.can_send_audios
+        assert permissions.can_send_documents == self.can_send_documents
+        assert permissions.can_send_photos == self.can_send_photos
+        assert permissions.can_send_videos == self.can_send_videos
+        assert permissions.can_send_video_notes == self.can_send_video_notes
+        assert permissions.can_send_voice_notes == self.can_send_voice_notes
+        assert permissions.can_edit_tag == self.can_edit_tag
+        assert permissions.can_react_to_messages == self.can_react_to_messages
 
     def test_to_dict(self, chat_permissions):
         permissions_dict = chat_permissions.to_dict()
 
         assert isinstance(permissions_dict, dict)
-        assert permissions_dict['can_send_messages'] == chat_permissions.can_send_messages
+        assert permissions_dict["can_send_messages"] == chat_permissions.can_send_messages
+        assert permissions_dict["can_send_polls"] == chat_permissions.can_send_polls
         assert (
-            permissions_dict['can_send_media_messages'] == chat_permissions.can_send_media_messages
-        )
-        assert permissions_dict['can_send_polls'] == chat_permissions.can_send_polls
-        assert (
-            permissions_dict['can_send_other_messages'] == chat_permissions.can_send_other_messages
+            permissions_dict["can_send_other_messages"] == chat_permissions.can_send_other_messages
         )
         assert (
-            permissions_dict['can_add_web_page_previews']
+            permissions_dict["can_add_web_page_previews"]
             == chat_permissions.can_add_web_page_previews
         )
-        assert permissions_dict['can_change_info'] == chat_permissions.can_change_info
-        assert permissions_dict['can_invite_users'] == chat_permissions.can_invite_users
-        assert permissions_dict['can_pin_messages'] == chat_permissions.can_pin_messages
+        assert permissions_dict["can_change_info"] == chat_permissions.can_change_info
+        assert permissions_dict["can_invite_users"] == chat_permissions.can_invite_users
+        assert permissions_dict["can_pin_messages"] == chat_permissions.can_pin_messages
+        assert permissions_dict["can_manage_topics"] == chat_permissions.can_manage_topics
+        assert permissions_dict["can_send_audios"] == chat_permissions.can_send_audios
+        assert permissions_dict["can_send_documents"] == chat_permissions.can_send_documents
+        assert permissions_dict["can_send_photos"] == chat_permissions.can_send_photos
+        assert permissions_dict["can_send_videos"] == chat_permissions.can_send_videos
+        assert permissions_dict["can_send_video_notes"] == chat_permissions.can_send_video_notes
+        assert permissions_dict["can_send_voice_notes"] == chat_permissions.can_send_voice_notes
+        assert permissions_dict["can_edit_tag"] == chat_permissions.can_edit_tag
+        assert permissions_dict["can_react_to_messages"] == chat_permissions.can_react_to_messages
 
     def test_equality(self):
         a = ChatPermissions(
             can_send_messages=True,
-            can_send_media_messages=True,
             can_send_polls=True,
             can_send_other_messages=False,
         )
@@ -108,15 +146,39 @@ class TestChatPermissions:
             can_send_polls=True,
             can_send_other_messages=False,
             can_send_messages=True,
-            can_send_media_messages=True,
         )
         c = ChatPermissions(
             can_send_messages=False,
-            can_send_media_messages=True,
             can_send_polls=True,
             can_send_other_messages=False,
         )
-        d = User(123, '', False)
+        d = User(123, "", False)
+        e = ChatPermissions(
+            can_send_messages=True,
+            can_send_polls=True,
+            can_send_other_messages=False,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_edit_tag=True,
+            can_react_to_messages=True,
+        )
+        f = ChatPermissions(
+            can_send_messages=True,
+            can_send_polls=True,
+            can_send_other_messages=False,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_edit_tag=True,
+            can_react_to_messages=True,
+        )
 
         assert a == b
         assert hash(a) == hash(b)
@@ -127,3 +189,33 @@ class TestChatPermissions:
 
         assert a != d
         assert hash(a) != hash(d)
+
+        assert a != e
+        assert hash(a) != hash(e)
+
+        assert e == f
+        assert hash(e) == hash(f)
+
+    def test_all_permissions(self):
+        f = ChatPermissions()
+        t = ChatPermissions.all_permissions()
+        # if the dirs are the same, the attributes will all be there
+        assert dir(f) == dir(t)
+        # now we just need to check that all attributes are True. _id_attrs returns all values,
+        # if a new one is added without defaulting to True, this will fail
+        for key in t.__slots__:
+            assert t[key] is True
+        # and as a finisher, make sure the default is different.
+        assert f != t
+
+    def test_no_permissions(self):
+        f = ChatPermissions()
+        t = ChatPermissions.no_permissions()
+        # if the dirs are the same, the attributes will all be there
+        assert dir(f) == dir(t)
+        # now we just need to check that all attributes are True. _id_attrs returns all values,
+        # if a new one is added without defaulting to False, this will fail
+        for key in t.__slots__:
+            assert t[key] is False
+        # and as a finisher, make sure the default is different.
+        assert f != t

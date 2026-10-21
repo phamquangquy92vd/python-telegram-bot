@@ -1,8 +1,8 @@
-:github_url: https://github.com/python-telegram-bot/python-telegram-bot/blob/master/telegram/chat.py
+Chat
+====
 
-telegram.Chat
-=============
-
+.. Also lists methods of _ChatBase, but not the ones of TelegramObject
 .. autoclass:: telegram.Chat
     :members:
     :show-inheritance:
+    :inherited-members: TelegramObject, object

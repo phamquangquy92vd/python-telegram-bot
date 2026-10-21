@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,18 +20,19 @@ import os
 
 import pytest
 
-from tests.conftest import env_var_2_bool
+from tests.auxil.envvars import env_var_2_bool
 
-
-@pytest.mark.skipif(
-    not env_var_2_bool(os.getenv('TEST_BUILD', False)), reason='TEST_BUILD not enabled'
+skip_disabled = pytest.mark.skipif(
+    not env_var_2_bool(os.getenv("TEST_BUILD", "")), reason="TEST_BUILD not enabled"
 )
+
+
+# To make the tests agnostic of the cwd
+@pytest.fixture(autouse=True)
+def _change_test_dir(request, monkeypatch):
+    monkeypatch.chdir(request.config.rootdir)
+
+
+@skip_disabled
 def test_build():
-    assert os.system('python setup.py bdist_dumb') == 0  # pragma: no cover
-
-
-@pytest.mark.skipif(
-    not env_var_2_bool(os.getenv('TEST_BUILD', False)), reason='TEST_BUILD not enabled'
-)
-def test_build_raw():
-    assert os.system('python setup-raw.py bdist_dumb') == 0  # pragma: no cover
+    assert os.system("python -m build") == 0  # pragma: no cover

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,34 +16,296 @@
 #
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
+import asyncio
+import inspect
+import json
+import re
+
 import pytest
-from flaky import flaky
 
-from telegram import constants
+from telegram import Message, constants
+from telegram._utils.enum import FloatEnum, IntEnum, StringEnum
 from telegram.error import BadRequest
+from tests.auxil.build_messages import make_message
+from tests.auxil.files import data_file
+from tests.auxil.string_manipulation import to_snake_case
 
 
-class TestConstants:
-    @flaky(3, 1)
-    def test_max_message_length(self, bot, chat_id):
-        bot.send_message(chat_id=chat_id, text='a' * constants.MAX_MESSAGE_LENGTH)
+class StrEnumTest(StringEnum):
+    FOO = "foo"
+    BAR = "bar"
 
-        with pytest.raises(
-            BadRequest,
-            match='Message is too long',
-        ):
-            bot.send_message(chat_id=chat_id, text='a' * (constants.MAX_MESSAGE_LENGTH + 1))
 
-    @flaky(3, 1)
-    def test_max_caption_length(self, bot, chat_id):
-        good_caption = 'a' * constants.MAX_CAPTION_LENGTH
-        with open('tests/data/telegram.png', 'rb') as f:
-            good_msg = bot.send_photo(photo=f, caption=good_caption, chat_id=chat_id)
+class IntEnumTest(IntEnum):
+    FOO = 1
+    BAR = 2
+
+
+class FloatEnumTest(FloatEnum):
+    FOO = 1.1
+    BAR = 2.1
+
+
+class TestConstantsWithoutRequest:
+    """Also test _utils.enum.StringEnum on the fly because tg.constants is currently the only
+    place where that class is used."""
+
+    def test__all__(self):
+        expected = {
+            key
+            for key, member in constants.__dict__.items()
+            if (
+                not key.startswith("_")
+                # exclude imported stuff
+                and getattr(member, "__module__", "telegram.constants") == "telegram.constants"
+                and key not in ("sys", "dtm", "UTC")
+            )
+        }
+        actual = set(constants.__all__)
+        assert actual == expected, (
+            f"Members {expected - actual} were not listed in constants.__all__"
+        )
+
+    def test_message_attachment_type(self):
+        assert all(
+            getattr(constants.MessageType, x.name, False) for x in constants.MessageAttachmentType
+        ), "All MessageAttachmentType members should be in MessageType"
+
+    def test_to_json(self):
+        assert json.dumps(StrEnumTest.FOO) == json.dumps("foo")
+        assert json.dumps(IntEnumTest.FOO) == json.dumps(1)
+        assert json.dumps(FloatEnumTest.FOO) == json.dumps(1.1)
+
+    def test_string_representation(self):
+        # test __repr__
+        assert repr(StrEnumTest.FOO) == "<StrEnumTest.FOO>"
+
+        # test __format__
+        assert f"{StrEnumTest.FOO} this {StrEnumTest.BAR}" == "foo this bar"
+        assert f"{StrEnumTest.FOO:*^10}" == "***foo****"
+
+        # test __str__
+        assert str(StrEnumTest.FOO) == "foo"
+
+    def test_int_representation(self):
+        # test __repr__
+        assert repr(IntEnumTest.FOO) == "<IntEnumTest.FOO>"
+        # test __format__
+        assert f"{IntEnumTest.FOO}/0 is undefined!" == "1/0 is undefined!"
+        assert f"{IntEnumTest.FOO:*^10}" == "****1*****"
+        # test __str__
+        assert str(IntEnumTest.FOO) == "1"
+
+    def test_float_representation(self):
+        # test __repr__
+        assert repr(FloatEnumTest.FOO) == "<FloatEnumTest.FOO>"
+        # test __format__
+        assert f"{FloatEnumTest.FOO}/0 is undefined!" == "1.1/0 is undefined!"
+        assert f"{FloatEnumTest.FOO:*^10}" == "***1.1****"
+        # test __str__
+        assert str(FloatEnumTest.FOO) == "1.1"
+
+    def test_string_inheritance(self):
+        assert isinstance(StrEnumTest.FOO, str)
+        assert StrEnumTest.FOO + StrEnumTest.BAR == "foobar"
+        assert StrEnumTest.FOO.replace("o", "a") == "faa"
+
+        assert StrEnumTest.FOO == StrEnumTest.FOO
+        assert StrEnumTest.FOO == "foo"
+        assert StrEnumTest.FOO != StrEnumTest.BAR
+        assert StrEnumTest.FOO != "bar"
+        assert object() != StrEnumTest.FOO
+
+        assert hash(StrEnumTest.FOO) == hash("foo")
+
+    def test_numeric_string_enum_values(self):
+        assert constants.InputStoryContentLimit.PHOTOSIZE_UPLOAD.value == "10000000"
+        assert constants.InputStoryContentLimit.PHOTO_WIDTH.value == "1080"
+        assert str(constants.InputStoryContentLimit.MAX_VIDEO_DURATION) == "60"
+
+    def test_int_inheritance(self):
+        assert isinstance(IntEnumTest.FOO, int)
+        assert IntEnumTest.FOO + IntEnumTest.BAR == 3
+
+        assert IntEnumTest.FOO == IntEnumTest.FOO
+        assert IntEnumTest.FOO == 1
+        assert IntEnumTest.FOO != IntEnumTest.BAR
+        assert IntEnumTest.FOO != 2
+        assert object() != IntEnumTest.FOO
+
+        assert hash(IntEnumTest.FOO) == hash(1)
+
+    def test_float_inheritance(self):
+        assert isinstance(FloatEnumTest.FOO, float)
+        assert FloatEnumTest.FOO + FloatEnumTest.BAR == 3.2
+
+        assert FloatEnumTest.FOO == FloatEnumTest.FOO
+        assert FloatEnumTest.FOO == 1.1
+        assert FloatEnumTest.FOO != FloatEnumTest.BAR
+        assert FloatEnumTest.FOO != 2.1
+        assert object() != FloatEnumTest.FOO
+
+        assert hash(FloatEnumTest.FOO) == hash(1.1)
+
+    def test_bot_api_version_and_info(self):
+        assert str(constants.BOT_API_VERSION_INFO) == constants.BOT_API_VERSION
+        assert (
+            tuple(int(x) for x in constants.BOT_API_VERSION.split("."))
+            == constants.BOT_API_VERSION_INFO
+        )
+
+    def test_bot_api_version_info(self):
+        vi = constants.BOT_API_VERSION_INFO
+        assert isinstance(vi, tuple)
+        assert repr(vi) == f"BotAPIVersion(major={vi[0]}, minor={vi[1]})"
+        assert vi == (vi[0], vi[1])
+        assert not (vi < (vi[0], vi[1]))
+        assert vi < (vi[0], vi[1] + 1)
+        assert vi < (vi[0] + 1, vi[1])
+        assert vi < (vi[0] + 1, vi[1] + 1)
+        assert vi[0] == vi.major
+        assert vi[1] == vi.minor
+
+    @staticmethod
+    def is_type_attribute(name: str) -> bool:
+        # Return False if the attribute doesn't generate a message type, i.e. only message
+        # metadata. Manually excluding a lot of attributes here is a bit of work, but it makes
+        # sure that we don't miss any new message types in the future.
+        patters = {
+            "(text|caption)_(markdown|html)",
+            "caption_(entities|html|markdown)",
+            "(edit_)?date",
+            "forward_",
+            "has_",
+        }
+
+        if any(re.match(pattern, name) for pattern in patters):
+            return False
+        return name not in {
+            "author_signature",
+            "api_kwargs",
+            "caption",
+            "chat",
+            "chat_id",
+            "direct_messages_topic",
+            "effective_attachment",
+            "entities",
+            "from_user",
+            "id",
+            "is_automatic_forward",
+            "is_topic_message",
+            "link",
+            "link_preview_options",
+            "media_group_id",
+            "message_id",
+            "message_thread_id",
+            "migrate_from_chat_id",
+            "reply_markup",
+            "reply_to_message",
+            "sender_chat",
+            "sender_tag",
+            "is_accessible",
+            "quote",
+            "external_reply",
+            "via_bot",
+            "is_from_offline",
+            "guest_bot_caller_chat",
+            "guest_bot_caller_user",
+            "guest_query_id",
+            "show_caption_above_media",
+            "paid_star_count",
+            "is_paid_post",
+            "reply_to_checklist_task_id",
+            "reply_to_poll_option_id",
+        }
+
+    @pytest.mark.parametrize(
+        "attribute",
+        [
+            name
+            for name, _ in inspect.getmembers(
+                make_message("test"), lambda x: not inspect.isroutine(x)
+            )
+        ],
+    )
+    def test_message_type_completeness(self, attribute):
+        if attribute.startswith("_") or not self.is_type_attribute(attribute):
+            return
+
+        assert hasattr(constants.MessageType, attribute.upper()), (
+            f"Missing MessageType.{attribute}. Please also check if this should be present in "
+            f"MessageAttachmentType."
+        )
+
+    @pytest.mark.parametrize("member", constants.MessageType)
+    def test_message_type_completeness_reverse(self, member):
+        assert self.is_type_attribute(member.value), (
+            f"Additional member {member} in MessageType that should not be a message type"
+        )
+
+    @pytest.mark.parametrize("member", constants.MessageAttachmentType)
+    def test_message_attachment_type_completeness(self, member):
+        try:
+            constants.MessageType(member)
+        except ValueError:
+            pytest.fail(f"Missing MessageType for {member}")
+
+    def test_message_attachment_type_completeness_reverse(self):
+        # Getting the type hints of a property is a bit tricky, so we instead parse the docstring
+        # for now
+        for match in re.finditer(r"`telegram.(\w+)`", Message.effective_attachment.__doc__):
+            name = to_snake_case(match.group(1))
+            if name == "photo_size":
+                name = "photo"
+            if name == "paid_media_info":
+                name = "paid_media"
+            try:
+                constants.MessageAttachmentType(name)
+            except ValueError:
+                pytest.fail(f"Missing MessageAttachmentType for {match.group(1)}")
+
+    def test_keyboard_button_style(self):
+        assert constants.KeyboardButtonStyle.PRIMARY == "primary"
+        assert constants.KeyboardButtonStyle.SUCCESS == "success"
+        assert constants.KeyboardButtonStyle.DANGER == "danger"
+        assert constants.KeyboardButtonStyle.BLUE == "primary"
+        assert constants.KeyboardButtonStyle.GREEN == "success"
+        assert constants.KeyboardButtonStyle.RED == "danger"
+
+
+class TestConstantsWithRequest:
+    async def test_max_message_length(self, bot, chat_id):
+        good_text = "a" * constants.MessageLimit.MAX_TEXT_LENGTH
+        bad_text = good_text + "Z"
+        tasks = asyncio.gather(
+            bot.send_message(chat_id, text=good_text),
+            bot.send_message(chat_id, text=bad_text),
+            return_exceptions=True,
+        )
+        good_msg, bad_msg = await tasks
+
+        if isinstance(good_msg, BaseException):
+            # handling xfails
+            raise good_msg
+
+        assert good_msg.text == good_text
+        assert isinstance(bad_msg, BadRequest)
+        assert "Message is too long" in str(bad_msg)
+
+    async def test_max_caption_length(self, bot, chat_id):
+        good_caption = "a" * constants.MessageLimit.CAPTION_LENGTH
+        bad_caption = good_caption + "Z"
+        tasks = asyncio.gather(
+            bot.send_photo(chat_id, data_file("telegram.png").read_bytes(), good_caption),
+            bot.send_photo(chat_id, data_file("telegram.png").read_bytes(), bad_caption),
+            return_exceptions=True,
+        )
+        good_msg, bad_msg = await tasks
+
+        if isinstance(good_msg, BaseException):
+            # handling xfails
+            raise good_msg
+
         assert good_msg.caption == good_caption
-
-        bad_caption = good_caption + 'Z'
-        with pytest.raises(
-            BadRequest,
-            match="Media_caption_too_long",
-        ), open('tests/data/telegram.png', 'rb') as f:
-            bot.send_photo(photo=f, caption=bad_caption, chat_id=chat_id)
+        assert isinstance(bad_msg, BadRequest)
+        assert "Message caption is too long" in str(bad_msg)

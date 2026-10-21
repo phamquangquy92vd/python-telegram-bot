@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # A library that provides a Python interface to the Telegram Bot API
-# Copyright (C) 2015-2022
+# Copyright (C) 2015-2026
 # Leandro Toledo de Souza <devs@python-telegram-bot.org>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,39 +16,70 @@
 # You should have received a copy of the GNU Lesser Public License
 # along with this program.  If not, see [http://www.gnu.org/licenses/].
 
-from telegram import MessageAutoDeleteTimerChanged, VoiceChatEnded
+import datetime as dtm
+
+from telegram import MessageAutoDeleteTimerChanged, VideoChatEnded
+from telegram.warnings import PTBDeprecationWarning
+from tests.auxil.slots import mro_slots
 
 
-class TestMessageAutoDeleteTimerChanged:
-    message_auto_delete_time = 100
+class TestMessageAutoDeleteTimerChangedWithoutRequest:
+    message_auto_delete_time = dtm.timedelta(seconds=100)
 
-    def test_slot_behaviour(self, recwarn, mro_slots):
+    def test_slot_behaviour(self):
         action = MessageAutoDeleteTimerChanged(self.message_auto_delete_time)
         for attr in action.__slots__:
-            assert getattr(action, attr, 'err') != 'err', f"got extra slot '{attr}'"
-        assert not action.__dict__, f"got missing slot(s): {action.__dict__}"
+            assert getattr(action, attr, "err") != "err", f"got extra slot '{attr}'"
         assert len(mro_slots(action)) == len(set(mro_slots(action))), "duplicate slot"
-        action.custom = 'should give warning'
-        assert len(recwarn) == 1 and 'custom' in str(recwarn[0].message), recwarn.list
 
     def test_de_json(self):
-        json_dict = {'message_auto_delete_time': self.message_auto_delete_time}
+        json_dict = {
+            "message_auto_delete_time": int(self.message_auto_delete_time.total_seconds())
+        }
         madtc = MessageAutoDeleteTimerChanged.de_json(json_dict, None)
+        assert madtc.api_kwargs == {}
 
-        assert madtc.message_auto_delete_time == self.message_auto_delete_time
+        assert madtc._message_auto_delete_time == self.message_auto_delete_time
 
     def test_to_dict(self):
         madtc = MessageAutoDeleteTimerChanged(self.message_auto_delete_time)
         madtc_dict = madtc.to_dict()
 
         assert isinstance(madtc_dict, dict)
-        assert madtc_dict["message_auto_delete_time"] == self.message_auto_delete_time
+        assert madtc_dict["message_auto_delete_time"] == int(
+            self.message_auto_delete_time.total_seconds()
+        )
+        assert isinstance(madtc_dict["message_auto_delete_time"], int)
+
+    def test_time_period_properties(self, PTB_TIMEDELTA):
+        message_auto_delete_time = MessageAutoDeleteTimerChanged(
+            self.message_auto_delete_time
+        ).message_auto_delete_time
+
+        if PTB_TIMEDELTA:
+            assert message_auto_delete_time == self.message_auto_delete_time
+            assert isinstance(message_auto_delete_time, dtm.timedelta)
+        else:
+            assert message_auto_delete_time == int(self.message_auto_delete_time.total_seconds())
+            assert isinstance(message_auto_delete_time, int)
+
+    def test_time_period_int_deprecated(self, recwarn, PTB_TIMEDELTA):
+        MessageAutoDeleteTimerChanged(self.message_auto_delete_time).message_auto_delete_time
+
+        if PTB_TIMEDELTA:
+            assert len(recwarn) == 0
+        else:
+            assert len(recwarn) == 1
+            assert "`message_auto_delete_time` will be of type `datetime.timedelta`" in str(
+                recwarn[0].message
+            )
+            assert recwarn[0].category is PTBDeprecationWarning
 
     def test_equality(self):
         a = MessageAutoDeleteTimerChanged(100)
         b = MessageAutoDeleteTimerChanged(100)
         c = MessageAutoDeleteTimerChanged(50)
-        d = VoiceChatEnded(25)
+        d = VideoChatEnded(25)
 
         assert a == b
         assert hash(a) == hash(b)

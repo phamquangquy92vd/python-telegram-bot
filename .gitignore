@@ -51,6 +51,8 @@ nosetests.xml
 coverage.xml
 *,cover
 .coveralls.yml
+.testmondata
+.testmondata-journal
 
 # Translations
 *.mo
@@ -65,9 +67,13 @@ docs/_build/
 # PyBuilder
 target/
 .idea/
+.run/
 
 # Sublime Text 2
 *.sublime*
+
+# VS Code
+.vscode
 
 # unitests files
 game.gif
@@ -87,3 +93,11 @@ telegram.jpg
 
 # virtual env
 venv*
+pyvenv.cfg
+Scripts/
+
+# environment manager:
+.mise.toml
+
+# Support for uv.lock will come in a future PR. See #4796
+uv.lock

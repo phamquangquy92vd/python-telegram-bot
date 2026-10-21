@@ -1,59 +1,58 @@
-# Make sure that
-#   * the revs specified here match requirements-dev.txt
-#   * the additional_dependencies here match requirements.txt
 repos:
--   repo: https://github.com/psf/black
-    rev: 20.8b1
+-   repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 'v0.16.8'
     hooks:
-    -   id: black
-        args:
-        - --diff
-        - --check
--   repo: https://gitlab.com/pycqa/flake8
-    rev: 3.9.2
-    hooks:
-    -   id: flake8
+    # Run the linter:
+    -   id: ruff-check
+        name: ruff check
+    # Run the formatter:
+    -   id: ruff-format
+        name: ruff format
 -   repo: https://github.com/PyCQA/pylint
-    rev: v2.8.3
+    rev: v4.1.3
     hooks:
     -   id: pylint
-        files: ^(telegram|examples)/.*\.py$
-        args:
-          - --rcfile=setup.cfg
+        # Run on the minimum supported Python; dill crashes on 3.15 in parallel mode.
+        # https://github.com/pylint-dev/pylint/issues/11528
+        language_version: python3.14
+        files: ^(?!(tests|docs)).*\.py$
+        language: python
         additional_dependencies:
-          - certifi
-          - tornado>=6.1
-          - APScheduler==3.6.3
-          - cachetools==4.2.2
+          - httpx~=0.27
+          - tornado~=6.4
+          - APScheduler>=3.10.4,<3.12.0
+          - cachetools>=7.0.0,<8.0.0
+          - aiolimiter~=1.3,<1.4
           - . # this basically does `pip install -e .`
+        priority: 10
 -   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v0.812
+    rev: v1.20.2
     hooks:
     -   id: mypy
         name: mypy-ptb
-        files: ^telegram/.*\.py$
+        files: ^(?!(tests|examples|docs)).*\.py$
+        language: python
         additional_dependencies:
-          - certifi
-          - tornado>=6.1
-          - APScheduler==3.6.3
-          - cachetools==4.2.2
+          - types-pytz
+          - types-cryptography
+          - types-cachetools
+          - httpx~=0.27
+          - tornado~=6.4
+          - APScheduler>=3.10.4,<3.12.0
+          - cachetools>=7.0.0,<8.0.0
+          - aiolimiter~=1.3,<1.4
           - . # this basically does `pip install -e .`
-    -   id: mypy
-        name: mypy-examples
-        files: ^examples/.*\.py$
-        args:
-          - --no-strict-optional
-          - --follow-imports=silent
-        additional_dependencies:
-          - certifi
-          - tornado>=6.1
-          - APScheduler==3.6.3
-          - cachetools==4.2.2
-          - . # this basically does `pip install -e .`
--   repo: https://github.com/asottile/pyupgrade
-    rev: v2.19.1
-    hooks:
-    -   id: pyupgrade
-        files: ^(telegram|examples|tests)/.*\.py$
-        args:
-          - --py36-plus
+        priority: 10
+    - id: mypy
+      name: mypy-examples
+      files: ^examples/.*\.py$
+      language: python
+      args:
+        - --no-strict-optional
+        - --follow-imports=silent
+      additional_dependencies:
+        - tornado~=6.4
+        - APScheduler>=3.10.4,<3.12.0
+        - cachetools>=7.0.0,<8.0.0
+        - . # this basically does `pip install -e .`
+      priority: 10
